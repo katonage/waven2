@@ -4,13 +4,13 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import json
 from tqdm import tqdm
-
-from skimage.filters import gabor_kernel
-
-import os
 import cv2
+from skimage.filters import gabor_kernel
 import gc
 import torch
+
+
+import os
 import skimage
 from scipy import ndimage
 from skimage.measure import block_reduce
@@ -298,10 +298,6 @@ def make_and_save_FilterLibrary(path, paramsdict, force=False):
     print(f"Library saved to {Path(path) / npy_filename} and {Path(path) / json_filename}")
     return (Path(path) / npy_filename, Path(path) / json_filename)    
 
-from pathlib import Path
-import cv2
-import numpy as np
-from tqdm import tqdm
 
 
 def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x, screen_y, output_path=None, force=False):
@@ -328,10 +324,10 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
 
     Saved array shape
     -----------------
-    (n_frames, screen_y, screen_x), dtype bool
+    (n_frames, screen_x, screen_y), dtype bool
     """
     
-    threshold=100 #Pixel threshold for binarization.
+    threshold=127 #Pixel threshold for binarization.
     
     path = Path(path)
 
@@ -376,13 +372,13 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
 
     print(f"Input video: {n_frames} frames, {input_w} x {input_h}")
     print(f"Crop pixels: x={x0}:{x1}, y={y0}:{y1}")
-    print(f"Output shape: ({n_frames}, {screen_y}, {screen_x})")
+    print(f"Output shape: ({n_frames}, {screen_x}, {screen_y})")
     
     out = np.lib.format.open_memmap(
         output_path,
         mode="w+",
         dtype=bool,
-        shape=(n_frames, screen_y, screen_x),
+        shape=(n_frames, screen_x, screen_y),
     )
 
 
@@ -401,7 +397,8 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
             interpolation=cv2.INTER_AREA,
         )
 
-        out[frame_idx] = resized > threshold
+        binary = resized > threshold
+        out[frame_idx] = binary.T
 
     cap.release()
     out.flush()
@@ -409,3 +406,104 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
 
     print(f"Saved downsampled binary video: {output_path}")
     return output_path
+
+
+def getWTfromVideo_batched(videodata, waveletLibrary,  device='cuda', batch_size=32):
+    """
+    Optimized wavelet transform using batch processing on GPU.
+    improved from: LeonKremers/Waven_working getWTfromNPY_batched function
+    
+    Processes multiple frames at once instead of frame-by-frame,
+    keeping the wavelet library in GPU memory throughout.
+    
+    Parameters:
+        videodata: numpy array of shape (n_frames, height, width)
+        waveletLibrary: numpy array of wavelet library (reshaped internally)
+        device: CUDA device
+        batch_size: number of frames to process at once (default 32)
+    
+    Returns:
+        WT: numpy array of shape (n_frames, d1...d6) where d1...d6 are the dimensions of the wavelet library excluding the last two (height, width)
+    """
+        
+    n_frames = videodata.shape[0]
+    n_wavelets = int(np.prod(waveletLibrary.shape[:-2]))
+
+    # Check that library and video have the same frame size
+    Gabor_frame_size_library = waveletLibrary.shape[-1] * waveletLibrary.shape[-2]
+    Gabor_frame_size_video = videodata.shape[-1] * videodata.shape[-2]
+    if Gabor_frame_size_library != Gabor_frame_size_video or waveletLibrary.shape[-1] != videodata.shape[-1]:
+        raise ValueError(f"Wavelet library frame size ({Gabor_frame_size_library}) does not match video frame size ({Gabor_frame_size_video}).")
+    
+    device = torch.device(device)
+    if device.type == "cuda":
+        idx = torch.cuda.current_device()
+        print(f"    Torch using: {device}, GPU name: {torch.cuda.get_device_name(idx)}, GPU index: {idx}")
+    else:
+        print(f"    Torch using: {device}")
+    
+    # Flatten and transfer library to GPU once and keep it there
+    l_torch_flat = torch.Tensor(waveletLibrary.reshape(-1, Gabor_frame_size_library).T).to(device)
+    print(f"    Frame batch shaped to [{batch_size}, {Gabor_frame_size_video}] to multiply by wavelet library reshaped to {l_torch_flat.shape} on device {device}")
+    
+    WT = np.empty((n_frames, n_wavelets), dtype=waveletLibrary.dtype)
+
+    # Process frames in batches
+    for batch_start in tqdm(range(0, n_frames, batch_size), desc=f"Wavelet transform batched"):
+        batch_end = min(batch_start + batch_size, n_frames)
+        batch_frames = videodata[batch_start:batch_end]
+        # Flatten frames to shape (batch_size, H*W)
+        batch_frames = batch_frames.reshape(batch_frames.shape[0], -1)
+        #send batch to GPU
+        frames_tensor = torch.as_tensor(batch_frames, dtype=l_torch_flat.dtype, device=l_torch_flat.device)
+        
+        # Vectorized matrix multiplication: (batch_size, H*W) @ (H*W, n_wavelets) -> (batch_size, n_wavelets)
+        output = frames_tensor @ l_torch_flat
+        
+        # Transfer results back to CPU and store in WT
+        batch_wt = output.cpu().numpy()
+        WT[batch_start:batch_end] = batch_wt
+    
+    # Clean up GPU memory only after all batches are done
+    del l_torch_flat
+    del frames_tensor
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    
+    # Reshape WT to match the wavelet library dimensions
+    WT = WT.reshape((n_frames,) + waveletLibrary.shape[:-2])
+    return WT
+
+def compute_and_save_dwt(downsampled_video_path, libpath,  device='cuda', force=False):
+    """
+    Wrapper function to compute and save wavelet transform.
+    
+    Parameters:
+        downsampled_video_path: Path to the downsampled video .npy file
+        libpath: Path to the Gabor filter library .npy file
+        device: CUDA device
+        force: If True, overwrite existing DWT file
+    Returns:
+        Path to the saved wavelet transform .npy file
+    """
+    
+    videodata=np.load(downsampled_video_path)
+    print(f"Loaded downsampled video data from {downsampled_video_path} with shape {videodata.shape} and dtype {videodata.dtype}")
+    
+    library = np.load(libpath)
+    print(f"Loaded Gabor filter library from {libpath} with shape {library.shape}")
+
+    dwt_name= f"{downsampled_video_path.stem}_lib{"_".join([str(x) for x in library.shape])}dwt.npy"
+    dwt_path= libpath.parent / dwt_name
+    if dwt_path.exists() and not force:
+        print(f"Wavelet transform file {dwt_path} already exists. Skipping computation.")
+        return dwt_path
+
+    WT=getWTfromVideo_batched(videodata, library, device=device)
+    print(f"Computed wavelet transform with shape {WT.shape} ")
+
+
+    np.save(dwt_path, WT)
+    print(f"Saved wavelet transform to {dwt_path} with shape {WT.shape} and dtype {WT.dtype}")
+    return dwt_path
