@@ -1,15 +1,17 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from wavelet_utils import make_and_save_FilterLibrary, makeFilterParamDict, loadFilterParamDict
+from wavelet_utils import make_and_save_FilterLibrary, makeFilterParamDict, loadFilterParamDict, downscale_binary_video
 
 
 #paths:
 temppath = r'D:\SynologyDriveSyncedDATA\PROCESSED\Waven'
+videopath = r'D:\SynologyDriveSyncedDATA\PROCESSED\Waven\zebra_s0_d420.0_fps59.94_RESAMPLED13fps.mp4'
 
+full_screen_coverage = [-90, 90, -45, 45] # [az_left, az_right, el_bottom, el_top] full screen position in visual degrees
 visual_coverage = [-90, 0, -30, 30] # [az_left, az_right, el_bottom, el_top] screen coverage in visual degrees
 screen_x = 100 # horizontal screen size in pixels for the Gabor filter generation and movie analysis
 
-nx = 40 # number of Gabor filters in the horizontal direction (azimuth) (y will be generated)
+nx = 5 # number of Gabor filters in the horizontal direction (azimuth) (y will be generated)
 
 n_thetas = 8 # number of angles to generate
 
@@ -44,6 +46,7 @@ phases = np.linspace(phase_min, phase_max, n_phases)
 
 print(f"Screen size: {screen_x}x{screen_y} pixels")
 print(f"Visual coverage: {visual_coverage} degrees")
+print(f"Full screen coverage: {full_screen_coverage} degrees")
 #print(f"Center positions (x_deg): {np.round(x_steps, 1)} degrees")
 #print(f"Center positions (y_deg): {np.round(y_steps, 1)} degrees")
 print(f"Angles (degrees): {np.round(np.rad2deg(angles), 1)}")
@@ -62,7 +65,7 @@ print(f"Control: Gabor step in visual degrees (y): {gabor_step:.1f}, vs size_min
 
 #--------------------------------------------------
 # pack parameters into a dictionary 
-params=makeFilterParamDict(screen_x, screen_y, visual_coverage, x_steps, y_steps, angles, sizes, freqs, phases)
+params=makeFilterParamDict(screen_x, screen_y, visual_coverage, full_screen_coverage, x_steps, y_steps, angles, sizes, freqs, phases)
 
 # generate and save the filter library if it doesn't exist
 lib_path, sidecar_path = make_and_save_FilterLibrary(temppath, params)
@@ -71,5 +74,9 @@ lib_path, sidecar_path = make_and_save_FilterLibrary(temppath, params)
 library = np.load(lib_path)
 print(f"Loaded Gabor filter library from {lib_path} with shape {library.shape}")
 
-xs, ys, angles, sizes, freqs, phases, visual_coverage, screen_x, screen_y = loadFilterParamDict(sidecar_path)
+xs, ys, angles, sizes, freqs, phases, visual_coverage, full_screen_coverage, screen_x, screen_y = loadFilterParamDict(sidecar_path)
 
+#------------------------------------------------
+# downsample displayed video to match the Gabor filters resolution and visual coverage
+
+downsampled_video_path=downscale_binary_video(videopath, full_screen_coverage, visual_coverage, screen_x, screen_y)

@@ -151,7 +151,7 @@ def makeGaborFilter_visual(i_deg, j_deg, angle, size_deg,  freq_deg, phase,  vis
     return filt
 
 
-def makeFilterParamDict(screen_x, screen_y, visual_coverage, xs, ys, angles, sigmas, frequencies, offsets):
+def makeFilterParamDict(screen_x, screen_y, visual_coverage, full_screen_coverage, xs, ys, angles, sigmas, frequencies, offsets):
     """
     Builds a dictionary containing the parameters used for Gabor filter generation.
 
@@ -169,7 +169,8 @@ def makeFilterParamDict(screen_x, screen_y, visual_coverage, xs, ys, angles, sig
         'offsets': offsets,
         'screen_x': screen_x,
         'screen_y': screen_y,
-        'visual_coverage': visual_coverage
+        'visual_coverage': visual_coverage, 
+        'full_screen_coverage': full_screen_coverage
     }
     return paramsdict
 
@@ -195,9 +196,10 @@ def loadFilterParamDict(json_path):
     freqs = params['frequencies']
     phases = params['offsets']
     visual_coverage = params['visual_coverage']
+    full_screen_coverage = params['full_screen_coverage']
     screen_x = params['screen_x']
     screen_y = params['screen_y']
-    return xs, ys, angles, sizes, freqs, phases, visual_coverage, screen_x, screen_y
+    return xs, ys, angles, sizes, freqs, phases, visual_coverage, full_screen_coverage, screen_x, screen_y
 
 def makeFilterLibrary(paramsdict):
     """
@@ -206,6 +208,7 @@ def makeFilterLibrary(paramsdict):
     Parameter: paramsdict (dict): A dictionary containing the parameters for Gabor filter generation:
         screen_x, screen_y (int): Width and height of the screen in pixels.
         visual_coverage (float): Coverage of the visual field.
+        full_screen_coverage (float): Full screen coverage in visual degrees.
         xs (array-like): Array of x positions (azimuth) in visual degrees.
         ys (array-like): Array of y positions (elevation) in visual degrees.
         angles (array-like): Orientations in radians (typically spanning 0 to π).
@@ -275,7 +278,7 @@ def make_and_save_FilterLibrary(path, paramsdict, force=False):
     npy_filename, json_filename = filename_from_params(paramsdict)
     
     if not force and (Path(path) / npy_filename).exists():
-        print("Library file already exists. Skipping generation.")
+        print("Gabor filter library file already exists. Skipping generation.")
         return (Path(path) / npy_filename, Path(path) / json_filename)  
     
     print ("Generating Gabor filter library...")
@@ -294,3 +297,115 @@ def make_and_save_FilterLibrary(path, paramsdict, force=False):
         
     print(f"Library saved to {Path(path) / npy_filename} and {Path(path) / json_filename}")
     return (Path(path) / npy_filename, Path(path) / json_filename)    
+
+from pathlib import Path
+import cv2
+import numpy as np
+from tqdm import tqdm
+
+
+def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x, screen_y, output_path=None, force=False):
+    """
+    Crop and downscale a binary visual stimulus video.
+
+    Parameters
+    ----------
+    path : str or Path
+        Input .mp4 file.
+    full_screen_coverage : list/tuple
+        [az_left, az_right, el_bottom, el_top] in visual degrees for the full video.
+    visual_coverage : list/tuple
+        [az_left, az_right, el_bottom, el_top] in visual degrees to keep.
+    screen_x, screen_y : int
+        Output frame size e.g. (100, 66).        
+    output_path : str or Path, optional
+        Output .npy path. If None, saves next to input.
+
+    Returns
+    -------
+    Path
+        Path to saved .npy file.
+
+    Saved array shape
+    -----------------
+    (n_frames, screen_y, screen_x), dtype bool
+    """
+    
+    threshold=100 #Pixel threshold for binarization.
+    
+    path = Path(path)
+
+    if output_path is None:
+        output_path = path.with_name(path.stem + "_downscaled.npy")
+    else:
+        output_path = Path(output_path)
+    
+    print("Generating cropped and downsampled binary video...")
+    if output_path.exists() and not force:
+        print(f"Output file {output_path} already exists. Skipping generation.")
+        return output_path
+
+    full = np.asarray(full_screen_coverage, dtype=float)
+    vis = np.asarray(visual_coverage, dtype=float)
+
+    az_left, az_right, el_bottom, el_top = full
+    v_az_left, v_az_right, v_el_bottom, v_el_top = vis
+
+
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        raise IOError(f"Could not open video: {path}")
+
+    n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    input_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    input_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    if n_frames <= 0:
+        raise ValueError("Could not determine number of frames from video.")
+
+    # Degree -> pixel conversion
+    x0 = round((v_az_left - az_left) / (az_right - az_left) * input_w)
+    x1 = round((v_az_right - az_left) / (az_right - az_left) * input_w)
+
+    # image y goes top -> bottom, elevation goes bottom -> top
+    y0 = round((el_top - v_el_top) / (el_top - el_bottom) * input_h)
+    y1 = round((el_top - v_el_bottom) / (el_top - el_bottom) * input_h)
+
+    x0, x1 = sorted((max(0, x0), min(input_w, x1)))
+    y0, y1 = sorted((max(0, y0), min(input_h, y1)))
+
+    print(f"Input video: {n_frames} frames, {input_w} x {input_h}")
+    print(f"Crop pixels: x={x0}:{x1}, y={y0}:{y1}")
+    print(f"Output shape: ({n_frames}, {screen_y}, {screen_x})")
+    
+    out = np.lib.format.open_memmap(
+        output_path,
+        mode="w+",
+        dtype=bool,
+        shape=(n_frames, screen_y, screen_x),
+    )
+
+
+    for frame_idx in tqdm(range(n_frames)):
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        gray = frame[:, :, 0]
+
+        cropped = gray[y0:y1, x0:x1]
+
+        resized = cv2.resize(
+            cropped,
+            dsize=(screen_x, screen_y),
+            interpolation=cv2.INTER_AREA,
+        )
+
+        out[frame_idx] = resized > threshold
+
+    cap.release()
+    out.flush()
+    del out
+
+    print(f"Saved downsampled binary video: {output_path}")
+    return output_path
