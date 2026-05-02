@@ -8,13 +8,7 @@ import cv2
 from skimage.filters import gabor_kernel
 import gc
 import torch
-
-
-import os
-import skimage
-from scipy import ndimage
-from skimage.measure import block_reduce
-from skimage import transform
+from torch_utils import handle_torch_device, print_cuda_tensors_mem
 
 def makeGaborFilter2(i, j, angle, size, frequency, phase, screen_x=100, screen_y=75, plot=False):
     """
@@ -238,14 +232,14 @@ def makeFilterLibrary(paramsdict):
     screen_y = paramsdict['screen_y']
     visual_coverage = paramsdict['visual_coverage']
     
-    library=[]
-    for x in tqdm(xs):
-        for y in ys:
-            for t in angles:
-                for s in sigmas:
-                    for f in frequencies:
-                        for o in offsets:
-                            library.append( makeGaborFilter_visual(            
+    library = np.empty( (len(xs), len(ys), len(angles), len(sigmas), len(frequencies), len(offsets), screen_x, screen_y), dtype=np.float16 )
+    for xi, x in tqdm(enumerate(xs), total=len(xs)):
+        for yi, y in enumerate(ys):
+            for ti, t in enumerate(angles):
+                for si, s in enumerate(sigmas):
+                    for fi, f in enumerate(frequencies):
+                        for oi, o in enumerate(offsets):
+                            library[xi, yi, ti, si, fi, oi] = makeGaborFilter_visual(            
                                                                     i_deg=x,
                                                                     j_deg=y,
                                                                     size_deg=s,
@@ -254,7 +248,7 @@ def makeFilterLibrary(paramsdict):
                                                                     phase=o,
                                                                     visual_coverage=visual_coverage,
                                                                     screen_x=screen_x,
-                                                                    screen_y=screen_y))
+                                                                    screen_y=screen_y)
 
     library=np.array(library)
     library=library.reshape((len(xs), len(ys), len(angles), len(sigmas), len(frequencies), len(offsets), screen_x, screen_y))
@@ -416,73 +410,93 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
     print(f"Saved downsampled binary video: {output_path}")
     return output_path
 
+    
+def getWTfromVideo_feature_batched(videodata, waveletLibrary, device="cuda", feature_batch_size=10_000, output_dtype=None):
+    """
+    Compute the wavelet transform of a video using a precomputed filter library.
 
-def getWTfromVideo_batched(videodata, waveletLibrary,  device='cuda', batch_size=32):
+    Frames and filters are flattened and multiplied on GPU, batching over the feature dimension to limit memory use.
+    Equivalent to applying each filter to each frame via dot product.
+    
+    Inspired by: https://github.com/LeonKremers/waven-working- WaveletGenerator.py getWTfromNPY_batched and https://github.com/skriabineSop/waven WaveletGenerator.py getWTfromNPY
+
+    Parameters
+    ----------
+    videodata : np.ndarray
+        Shape (n_frames, H, W).
+
+    waveletLibrary : np.ndarray
+        Shape (...feature_dims, H, W). Spatial dims must match `videodata`.
+
+    device : str or torch.device, optional
+        Compute device ("cuda" or "cpu").
+
+    feature_batch_size : int, optional
+        Number of features processed per batch (controls VRAM usage).
+
+    Returns
+    -------
+    WT : np.ndarray
+        Shape (n_frames, ...feature_dims).
+    
     """
-    Optimized wavelet transform using batch processing on GPU.
-    
-    Adapted from: https://github.com/LeonKremers/waven-working- WaveletGenerator.py getWTfromNPY_batched 
-    
-    Processes multiple frames at once instead of frame-by-frame,
-    keeping the wavelet library in GPU memory throughout.
-    
-    Parameters:
-        videodata: numpy array of shape (n_frames, height, width)
-        waveletLibrary: numpy array of wavelet library (reshaped internally)
-        device: CUDA device
-        batch_size: number of frames to process at once (default 32)
-    
-    Returns:
-        WT: numpy array of shape (n_frames, d1...d6) where d1...d6 are the dimensions of the wavelet library excluding the last two (height, width)
-    """
-        
+
+    device = handle_torch_device(device)
+
     n_frames = videodata.shape[0]
-    n_wavelets = int(np.prod(waveletLibrary.shape[:-2]))
+    feature_shape = waveletLibrary.shape[:-2]
+    n_wavelets = int(np.prod(feature_shape))
 
-    # Check that library and video have the same frame size
-    Gabor_frame_size_library = waveletLibrary.shape[-1] * waveletLibrary.shape[-2]
-    Gabor_frame_size_video = videodata.shape[-1] * videodata.shape[-2]
-    if Gabor_frame_size_library != Gabor_frame_size_video or waveletLibrary.shape[-1] != videodata.shape[-1]:
-        raise ValueError(f"Wavelet library frame size ({Gabor_frame_size_library}) does not match video frame size ({Gabor_frame_size_video}).")
-    
-    device = torch.device(device)
-    if device.type == "cuda":
-        idx = torch.cuda.current_device()
-        print(f"    Torch using: {device}, GPU name: {torch.cuda.get_device_name(idx)}, GPU index: {idx}")
-    else:
-        print(f"    Torch using: {device}")
-    
-    # Flatten and transfer library to GPU once and keep it there
-    l_torch_flat = torch.Tensor(waveletLibrary.reshape(-1, Gabor_frame_size_library).T).to(device)
-    print(f"    Frame batch shaped to [{batch_size}, {Gabor_frame_size_video}] to multiply by wavelet library reshaped to {l_torch_flat.shape} on device {device}")
-    
-    WT = np.empty((n_frames, n_wavelets), dtype=waveletLibrary.dtype)
+    frame_size_video = videodata.shape[-1] * videodata.shape[-2]
+    frame_size_library = waveletLibrary.shape[-1] * waveletLibrary.shape[-2]
 
-    # Process frames in batches
-    for batch_start in tqdm(range(0, n_frames, batch_size), desc=f"Wavelet transform batched"):
-        batch_end = min(batch_start + batch_size, n_frames)
-        batch_frames = videodata[batch_start:batch_end]
-        # Flatten frames to shape (batch_size, H*W)
-        batch_frames = batch_frames.reshape(batch_frames.shape[0], -1)
-        #send batch to GPU
-        frames_tensor = torch.as_tensor(batch_frames, dtype=l_torch_flat.dtype, device=l_torch_flat.device)
+    if frame_size_video != frame_size_library:
+        raise ValueError(
+            f"Video frame size ({frame_size_video}) does not match "
+            f"library frame size ({frame_size_library})."
+        )
+
+    if output_dtype is None:
+        output_dtype = waveletLibrary.dtype
+
+    torch_dtype = torch.float16 if waveletLibrary.dtype == np.float16 else torch.float32
+
+    print(f"    n_frames: {n_frames}")
+    print(f"    n_wavelets: {n_wavelets}")
+    print(f"    frame_size: {frame_size_video}")
+    print(f"    feature_batch_size: {feature_batch_size}")
+    print(f"    output shape: ({n_frames}, {n_wavelets}) -> ({n_frames}, {feature_shape})")
+
+    WT = np.empty((n_frames, n_wavelets), dtype=output_dtype)
+
+    video_flat = videodata.reshape(n_frames, frame_size_video)
+    library_flat = waveletLibrary.reshape(n_wavelets, frame_size_library)
+
+    with torch.no_grad():
+        frames_tensor = torch.as_tensor( video_flat, dtype=torch_dtype, device=device,)
+
         
-        # Vectorized matrix multiplication: (batch_size, H*W) @ (H*W, n_wavelets) -> (batch_size, n_wavelets)
-        output = frames_tensor @ l_torch_flat
-        
-        # Transfer results back to CPU and store in WT
-        batch_wt = output.cpu().numpy()
-        WT[batch_start:batch_end] = batch_wt
-    
-    # Clean up GPU memory only after all batches are done
-    del l_torch_flat, frames_tensor, output
+        for f0 in tqdm(range(0, n_wavelets, feature_batch_size), desc="Wavelet feature batches"):
+            f1 = min(f0 + feature_batch_size, n_wavelets)
+
+            L_chunk = torch.as_tensor(library_flat[f0:f1].T, dtype=frames_tensor.dtype, device=device)
+
+            output_chunk = frames_tensor @ L_chunk
+
+            WT[:, f0:f1] = output_chunk.cpu().numpy()
+
+        print_cuda_tensors_mem({"frames_tensor": frames_tensor, "L_chunk": L_chunk, "output_chunk": output_chunk})
+
+        del frames_tensor, L_chunk, output_chunk
+
+    WT = WT.reshape((n_frames,) + feature_shape)
+
     gc.collect()
     if device.type == "cuda":
         torch.cuda.empty_cache()
-    
-    # Reshape WT to match the wavelet library dimensions
-    WT = WT.reshape((n_frames,) + waveletLibrary.shape[:-2])
+
     return WT
+
 
 def compute_and_save_dwt(downsampled_video_path, libpath,  device='cuda', force=False):
     """
@@ -509,7 +523,7 @@ def compute_and_save_dwt(downsampled_video_path, libpath,  device='cuda', force=
         print(f"Wavelet transform file {dwt_path} already exists. Skipping computation.")
         return dwt_path
 
-    WT=getWTfromVideo_batched(videodata, library, device=device)
+    WT=getWTfromVideo_feature_batched(videodata, library, device=device)
     print(f"Computed wavelet transform with shape {WT.shape} ")
 
     np.save(dwt_path, WT)

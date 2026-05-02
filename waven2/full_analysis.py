@@ -1,18 +1,20 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import torch
 from wavelet_utils import make_and_save_FilterLibrary, makeFilterParamDict, loadFilterParamDict, downscale_binary_video, compute_and_save_dwt
+from analysis_utils import PearsonCorrelationRF_batched
 
 
 #paths:
 temppath = r'D:\SynologyDriveSyncedDATA\PROCESSED\Waven'
 videopath = r'D:\SynologyDriveSyncedDATA\PROCESSED\Waven\zebra_s0_d420.0_fps59.94_RESAMPLED13fps.mp4'
+spks_path = r"D:\SynologyDriveSyncedDATA\PROCESSED\GBM\GBM11\g11_0409_zebra5\ZEBRA_ANALYSIS\resps_all.npy"
+
 
 full_screen_coverage = [-90, 0, -45, 45] # [az_left, az_right, el_bottom, el_top] full screen position in visual degrees
 visual_coverage = [-90, 0, -30, 30] # [az_left, az_right, el_bottom, el_top] screen coverage in visual degrees
 screen_x = 100 # horizontal screen size in pixels for the Gabor filter generation and movie analysis
 
-nx = 15 # number of Gabor filters in the horizontal direction (azimuth) (y will be generated)
+nx = 40 # number of Gabor filters in the horizontal direction (azimuth) (y will be generated)
 
 n_thetas = 8 # number of angles to generate
 
@@ -86,4 +88,19 @@ downsampled_video_path=downscale_binary_video(videopath, full_screen_coverage, v
 # video decomposition into Gabor filter responses   
 dwt_path=compute_and_save_dwt(downsampled_video_path, lib_path)
 
-print(f"Full analysis completed. DWT saved to {dwt_path}")
+
+# -----------------------------------------------
+# compute the RFs
+
+dwt = np.load(dwt_path)
+print(f"dwt shape: {dwt.shape}")
+spks=np.load(spks_path)
+print(f"spks shape: {spks.shape}")
+mean_spks = np.mean(spks[:, :, :], axis=0)
+
+# restrict dwt to >0
+dwt[dwt < 0] = 0
+
+rfs = PearsonCorrelationRF_batched(dwt, mean_spks)
+
+print(f"Full analysis completed.")
