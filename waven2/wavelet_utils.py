@@ -22,6 +22,8 @@ def makeGaborFilter2(i, j, angle, size, frequency, phase, screen_x=100, screen_y
 
     The function constructs a Gabor kernel using skimage, then places it at a specified
     spatial location (i, j) within a larger image (screen).
+    
+    Adapted from: https://github.com/skriabineSop/waven WaveletGenerator.py makeGaborFilter
 
     Parameters
     ----------
@@ -70,8 +72,11 @@ def makeGaborFilter2(i, j, angle, size, frequency, phase, screen_x=100, screen_y
     ky0 = dp - (j - y0)
     ky1 = dp + (y1 - j)
 
-    backgrd[x0:x1, y0:y1] = gk.real[kx0:kx1, ky0:ky1]
-    backgrd = backgrd.astype('float16')  # transpose 
+    backgrd[x0:x1, y0:y1] = gk.real[kx0:kx1, ky0:ky1] # injecting Gabor patch into the frame
+    
+    backgrd = backgrd-np.mean(backgrd) # zero mean ! to make sense cutting response abovezero 
+    
+    backgrd = backgrd.astype('float16')  # no transpose, keep it as (x, y)
         
     if plot:
         v = np.max(np.abs(backgrd))
@@ -204,6 +209,8 @@ def loadFilterParamDict(json_path):
 def makeFilterLibrary(paramsdict):
     """
     Builds a Gabor filter library.
+    
+    Adapted from: https://github.com/skriabineSop/waven WaveletGenerator.py makeFilterLibrary2   
 
     Parameter: paramsdict (dict): A dictionary containing the parameters for Gabor filter generation:
         screen_x, screen_y (int): Width and height of the screen in pixels.
@@ -303,6 +310,8 @@ def make_and_save_FilterLibrary(path, paramsdict, force=False):
 def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x, screen_y, output_path=None, force=False):
     """
     Crop and downscale a binary visual stimulus video.
+    
+    Adapted from: https://github.com/skriabineSop/waven WaveletGenerator.py downsample_video_binary
 
     Parameters
     ----------
@@ -411,7 +420,8 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
 def getWTfromVideo_batched(videodata, waveletLibrary,  device='cuda', batch_size=32):
     """
     Optimized wavelet transform using batch processing on GPU.
-    improved from: LeonKremers/Waven_working getWTfromNPY_batched function
+    
+    Adapted from: https://github.com/LeonKremers/waven-working- WaveletGenerator.py getWTfromNPY_batched 
     
     Processes multiple frames at once instead of frame-by-frame,
     keeping the wavelet library in GPU memory throughout.
@@ -465,8 +475,7 @@ def getWTfromVideo_batched(videodata, waveletLibrary,  device='cuda', batch_size
         WT[batch_start:batch_end] = batch_wt
     
     # Clean up GPU memory only after all batches are done
-    del l_torch_flat
-    del frames_tensor
+    del l_torch_flat, frames_tensor, output
     gc.collect()
     if device.type == "cuda":
         torch.cuda.empty_cache()
@@ -502,7 +511,6 @@ def compute_and_save_dwt(downsampled_video_path, libpath,  device='cuda', force=
 
     WT=getWTfromVideo_batched(videodata, library, device=device)
     print(f"Computed wavelet transform with shape {WT.shape} ")
-
 
     np.save(dwt_path, WT)
     print(f"Saved wavelet transform to {dwt_path} with shape {WT.shape} and dtype {WT.dtype}")
