@@ -3,6 +3,7 @@ import torch
 import gc
 from tqdm import tqdm
 from torch_utils import handle_torch_device, print_cuda_tensors_mem
+from itertools import combinations
 
 def correctNeuronPos(neuron_pos, resolution=2.14):
     """
@@ -25,61 +26,75 @@ def correctNeuronPos(neuron_pos, resolution=2.14):
     
     return neuron_pos
 
-def repetability_trial3(resps_all):
+
+def compute_respcorr_split_half(resps_all):
     """
-    Computes the repeatbility accross trials of the neuronal activity
-    
-    Adapted from: https://github.com/skriabineSop/waven Analysis_Utils.py repetability_trial3 
+    Compute split-half reliability (trial-to-trial response correlation) per neuron.
 
-    Parameters:
-        resps_all (array-like): shape (nb_trials, nb_timepoints, nb_neurons).
-        neuron_pos (array-like): shape (nb_neurons, nb_dim(x, y,))
+    For each neuron:
+        - Trials are split into two groups 
+        - The mean response over time is computed for each group
+        - Pearson correlation between the two averages is computed
+        - The result is averaged across all possible splits
+        
+    This is a more computationally intensive versio of https://github.com/skriabineSop/waven Analysis_Utils.py repetability_trial3
 
-    Returns:
-        response correation (array): shape (nb_neurons), pearsons correlation of the repeats
+    Parameters
+    ----------
+    resps_all : np.ndarray
+        Array of shape (n_trials, n_timepoints, n_neurons)
+
+    Returns
+    -------
+    respcorr : np.ndarray
+        Array of shape (n_neurons,)
+        Mean split-half correlation per neuron.
+        Values range roughly from -1 to 1.
+        NaN is returned if correlation cannot be computed (e.g. zero variance).
+
+    Notes
+    -----
+    - Requires at least 2 trials.
+    - Splits are generated using all combinations of size floor(n_trials / 2).
     """
-    ## repetability across trial
-    n_cell=resps_all.shape[2]
 
-    respcorrs = np.zeros(n_cell)
+    n_trials, n_t, n_neurons = resps_all.shape
 
-    if resps_all.shape[0] == 2:
-        for i in range(n_cell):
-            meanresp1 = np.mean(resps_all[[0], :, i], axis=0)
-            meanresp2 = np.mean(resps_all[[1], :, i], axis=0)
-            respcorr = np.corrcoef(meanresp1, meanresp2)[0, 1]
-            respcorrs[i] = respcorr
+    if n_trials < 2:
+        raise ValueError("Need at least 2 trials to compute correlation.")
 
-    elif resps_all.shape[0] == 3:
-        for i in range(n_cell):
-            meanresp1 = np.mean(resps_all[[0, 2], :, i], axis=0)
-            meanresp2 = np.mean(resps_all[[1], :, i], axis=0)
-            respcorr = np.corrcoef(meanresp1, meanresp2)[0, 1]
-            respcorrs[i] = respcorr
+    k = n_trials // 2  # balanced split size
+    splits = list(combinations(range(n_trials), k))
 
-    elif resps_all.shape[0] == 4:
-        for i in range(n_cell):
-            meanresp1 = np.mean(resps_all[[0, 2], :, i], axis=0)
-            meanresp2 = np.mean(resps_all[[1, 3], :, i], axis=0)
-            respcorr = np.corrcoef(meanresp1, meanresp2)[0, 1]
-            respcorrs[i] = respcorr
+    respcorr = np.zeros(n_neurons)
 
-    elif resps_all.shape[0] == 5:
-        for i in range(n_cell):
-            meanresp1 = np.mean(resps_all[[0, 2, 4], :, i], axis=0)
-            meanresp2 = np.mean(resps_all[[1, 3], :, i], axis=0)
-            respcorr = np.corrcoef(meanresp1, meanresp2)[0, 1]
-            respcorrs[i] = respcorr
+    for ni in tqdm(range(n_neurons), desc="Computing split-half correlation per neuron"):
+        corrs = []
 
-    else:
-        raise ValueError(f"Unexpected number of trials: {resps_all.shape[0]}. Expected 2, 3, 4, or 5.")
+        for groupA in splits:
+            groupA = list(groupA)
+            groupB = [i for i in range(n_trials) if i not in groupA]
 
+            A = resps_all[groupA, :, ni].mean(axis=0)
+            B = resps_all[groupB, :, ni].mean(axis=0)
 
-    return respcorrs
+            # Degeneracy check: zero variance → undefined correlation
+            if np.std(A) == 0 or np.std(B) == 0:
+                continue
 
+            c = np.corrcoef(A, B)[0, 1]
 
+            if not np.isnan(c):
+                corrs.append(c)
 
-def PearsonCorrelationRF_batched(stim, resp, device="cuda", feature_batch_size=10_000  ):
+        if len(corrs) == 0:
+            respcorr[ni] = np.nan
+        else:
+            respcorr[ni] = np.mean(corrs)
+
+    return respcorr
+
+def FeatureSearch_correlation_batched(stim, resp, device="cuda", feature_batch_size=10_000  ):
     """
     Pearson correlation between WT stimulus features and neural responses. Uses GPU feature-batched.
 

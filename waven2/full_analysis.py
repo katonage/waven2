@@ -1,12 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from wavelet_utils import make_and_save_FilterLibrary, makeFilterParamDict, loadFilterParamDict, downscale_binary_video, compute_and_save_dwt
-from analysis_utils import PearsonCorrelationRF_batched
+from analysis_utils import FeatureSearch_correlation_batched, compute_respcorr_split_half
 
 
 #paths:
 temppath = r'D:\SynologyDriveSyncedDATA\PROCESSED\Waven'
-videopath = r'D:\SynologyDriveSyncedDATA\PROCESSED\Waven\zebra_s0_d420.0_fps59.94_RESAMPLED13fps.mp4'
+videopath = r'D:\SynologyDriveSyncedDATA\PROCESSED\Waven\zebra_s0_d420.0_fps59.94_RESAMPLED30fps.mp4'
 spks_path = r"D:\SynologyDriveSyncedDATA\PROCESSED\GBM\GBM11\g11_0409_zebra5\ZEBRA_ANALYSIS\resps_all.npy"
 
 
@@ -26,7 +26,8 @@ freq_min = .02 # minimum frequency in cycles per visual degree
 freq_max = .1 # maximum frequency in cycles per visual degree
 n_freqs = 4  # number of frequencies to generate
 
-n_phases = 4  # number of phases to generate
+n_phases = 2  # number of phases to generate
+phase_max = np.pi # maximum phase in radians
 
 #--------------------------------------------------
 
@@ -43,7 +44,7 @@ y_steps = np.linspace(el_bottom, el_top, ny, endpoint=False)+(el_top - el_bottom
 angles= np.linspace(0, np.pi, n_thetas, endpoint=False)
 sizes = np.logspace(np.log10(size_min), np.log10(size_max), n_sizes)
 freqs = np.logspace(np.log10(freq_min), np.log10(freq_max), n_freqs)
-phases = np.linspace(0, 2 * np.pi, n_phases, endpoint=False)
+phases = np.linspace(0, phase_max, n_phases, endpoint=False)
 
 print(f"Screen size: {screen_x}x{screen_y} pixels")
 print(f"Visual coverage: {visual_coverage} degrees")
@@ -93,14 +94,20 @@ dwt_path=compute_and_save_dwt(downsampled_video_path, lib_path)
 # compute the RFs
 
 dwt = np.load(dwt_path)
-print(f"dwt shape: {dwt.shape}")
+print(f"dwt shape: {dwt.shape} (n_frames, (feature dimensions...))")
 spks=np.load(spks_path)
-print(f"spks shape: {spks.shape}")
+print(f"spks shape: {spks.shape} (n_trials, n_frames, n_neurons)")
+# Repeatability
+respcorr = compute_respcorr_split_half(spks)
 mean_spks = np.mean(spks[:, :, :], axis=0)
 
-# restrict dwt to >0
-dwt[dwt < 0] = 0
 
-rfs = PearsonCorrelationRF_batched(dwt, mean_spks)
+# calculating DWT amplitude from the two phases
+dwt_squared = dwt[..., 0]**2 + dwt[..., 1]**2
+dwt_phase = np.arctan2(dwt[..., 1], dwt[..., 0])
+dwt_phase = (dwt_phase + np.pi) / (2 * np.pi) 
+
+rfs = FeatureSearch_correlation_batched(dwt_squared, mean_spks)
+print(f"rfs shape: {rfs.shape} (n_neurons, (feature dimensions...))")
 
 print(f"Full analysis completed.")
