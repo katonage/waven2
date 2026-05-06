@@ -174,3 +174,67 @@ def FeatureSearch_correlation_batched(stim, resp, device="cuda", feature_batch_s
         torch.cuda.empty_cache()
 
     return rfs
+
+
+def dwt_amp_phase_torch_batched(dwt, device="cuda", batch_size=256, output_dtype=np.float32, ):
+    """
+    Compute _squared_ amplitude and phase from real/imag array using torch batching.
+
+    Parameters
+    ----------
+    dwt : np.ndarray
+        Shape (..., 2), last dim is [real, imag].
+    device : str
+        "cuda" or "cpu".
+    batch_size : int
+        Batch size along first axis.
+    output_dtype : np.dtype
+        Output dtype.
+
+    Returns
+    -------
+    dwt_squared : np.ndarray
+        Shape dwt.shape[:-1].
+    dwt_phase : np.ndarray
+        Shape dwt.shape[:-1].
+    """
+
+    device = handle_torch_device(device)
+
+    out_shape = dwt.shape[:-1]
+
+    dwt_squared = np.empty(out_shape, dtype=output_dtype)
+    dwt_phase = np.empty(out_shape, dtype=output_dtype)
+
+    n0 = dwt.shape[0]
+
+    with torch.no_grad():
+        for i0 in tqdm(range(0, n0, batch_size), desc="Calculating DWT amplitude and phase"):
+            i1 = min(i0 + batch_size, n0)
+
+            batch = torch.as_tensor(
+                dwt[i0:i1],
+                dtype=torch.float32,
+                device=device
+            )
+
+            real = batch[..., 0]
+            imag = batch[..., 1]
+
+            amp2 = real * real + imag * imag
+            phase = torch.atan2(imag, real)
+            phase = phase + torch.pi
+
+            dwt_squared[i0:i1] = amp2.cpu().numpy()
+            dwt_phase[i0:i1] = phase.cpu().numpy()
+
+        
+        print_cuda_tensors_mem({"batch": batch, "real": real, "imag": imag, "amp2": amp2, "phase": phase})
+        del batch, real, imag, amp2, phase
+
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    gc.collect()
+
+    return dwt_squared, dwt_phase

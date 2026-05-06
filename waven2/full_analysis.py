@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from wavelet_utils import make_and_save_FilterLibrary, makeFilterParamDict, loadFilterParamDict, downscale_binary_video, compute_and_save_dwt
-from analysis_utils import FeatureSearch_correlation_batched, compute_respcorr_split_half
+from analysis_utils import FeatureSearch_correlation_batched, compute_respcorr_split_half, dwt_amp_phase_torch_batched
 
 
 #paths:
@@ -18,13 +18,13 @@ nx = 40 # number of Gabor filters in the horizontal direction (azimuth) (y will 
 
 n_thetas = 8 # number of angles to generate
 
-size_min = 3 # minimum size in visual degrees
-size_max = 14 # maximum size in visual degrees
-n_sizes = 5   # number of sizes to generate
+size_min = 3 # minimum size in visual degrees               #Sophie:3
+size_max = 14 # maximum size in visual degrees              #Sophie:14
+n_sizes = 5   # number of sizes to generate                 #Sophie: 5
 
-freq_min = .02 # minimum frequency in cycles per visual degree
-freq_max = .1 # maximum frequency in cycles per visual degree
-n_freqs = 4  # number of frequencies to generate
+freq_min = .02 # minimum frequency in cycles per visual degree  #Sophie: 0.015
+freq_max = .1 # maximum frequency in cycles per visual degree   #Sophie: 0.1
+n_freqs = 4  # number of frequencies to generate                #Sophie: 4
 
 n_phases = 2  # number of phases to generate
 phase_max = np.pi # maximum phase in radians
@@ -101,11 +101,8 @@ print(f"spks shape: {spks.shape} (n_trials, n_frames, n_neurons)")
 respcorr = compute_respcorr_split_half(spks)
 mean_spks = np.mean(spks[:, :, :], axis=0)
 
-
-# calculating DWT amplitude from the two phases
-dwt_squared = dwt[..., 0]**2 + dwt[..., 1]**2
-dwt_phase = np.arctan2(dwt[..., 1], dwt[..., 0])
-dwt_phase = (dwt_phase + np.pi) / (2 * np.pi) 
+#Calculating DWT squared amplitude and phase from the two phase DWT  
+dwt_squared, dwt_phase=dwt_amp_phase_torch_batched(dwt)
 
 rfs = FeatureSearch_correlation_batched(dwt_squared, mean_spks)
 print(f"rfs shape: {rfs.shape} (n_neurons, (feature dimensions...))")
