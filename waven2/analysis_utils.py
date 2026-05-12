@@ -262,7 +262,7 @@ def smooth_stimulus_signals(rho, phi, dphi, average_FWHM_samples):
 
 def fit_model(rho, phi, dphi, spks, hanning_window=4, ncut=20, smooth_stim_FWHM_samples=0):
     """
-    Fit a 3D histogram-based model predicting spiking from (rho, phi, dphi).
+    Fit a 3D histogram-based model predicting spiking from (rho, phi, dphi). See Skriabine et al. 2026.
 
     Builds a weighted histogram, returns an interpolator for prediction along with the smoothed grid.
     
@@ -348,3 +348,54 @@ def apply_model(interp, rho, phi, dphi, smooth_stim_FWHM_samples=0):
     rho, phi, dphi = smooth_stimulus_signals(rho, phi, dphi, smooth_stim_FWHM_samples)
     pred = interp(rho, phi, dphi)
     return  pred
+
+def sine1x(x, constant, amplitude, orientation):
+    """
+    One-period sine on 0..1π : Used to fit angle tuning curve (phase = orientation). Orientation is in radians
+
+    y = constant + amplitude * sin(x + orientation)
+    """
+    return constant + amplitude * np.cos( 2 * (x - orientation))
+
+
+def fit_sine1x(x, y):
+    """
+    Fits sine1x to data (see sine1x). Used to fit angle tuning curve
+
+    Parameters
+    ----------
+    x : array: phase/orientation
+    y : array: response
+
+    Returns
+    -------
+    params : dict
+        {
+            "constant": ...,
+            "amplitude": ...,
+            "orientation": ...
+        }
+    """
+    if len(x) != len(y):
+        raise ValueError("x and y must have same length")
+    x2=2*x
+    X = np.column_stack([
+        np.ones_like(x2),
+        np.sin(x2),
+        np.cos(x2),
+    ])
+
+    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+
+    constant = coef[0]
+    sin_coef = coef[1]
+    cos_coef = coef[2]
+
+    amplitude = np.sqrt(sin_coef**2 + cos_coef**2)
+    orientation = np.mod(np.arctan2(sin_coef, cos_coef)/2,  np.pi)
+
+    return {
+        "constant": constant,
+        "amplitude": amplitude,
+        "orientation": orientation,
+    }
