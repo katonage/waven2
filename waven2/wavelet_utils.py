@@ -479,7 +479,7 @@ def getWTfromVideo_feature_batched(videodata, waveletLibrary, device="cuda", fea
         for f0 in tqdm(range(0, n_wavelets, feature_batch_size), desc="Wavelet feature batches"):
             f1 = min(f0 + feature_batch_size, n_wavelets)
 
-            L_chunk = torch.as_tensor(library_flat[f0:f1].T, dtype=frames_tensor.dtype, device=device)
+            L_chunk = torch.as_tensor(library_flat[f0:f1].T, dtype=frames_tensor.dtype, device=device) #drops user warning about read-only memmapped input. can be suppressed with .copy() but it is slower
 
             output_chunk = frames_tensor @ L_chunk
 
@@ -514,7 +514,7 @@ def compute_and_save_dwt(downsampled_video_path, libpath,  device='cuda', force=
     videodata=np.load(downsampled_video_path)
     print(f"Loaded downsampled video data from {downsampled_video_path} with shape {videodata.shape} and dtype {videodata.dtype}")
     
-    library = np.load(libpath)
+    library = np.load(libpath, mmap_mode='r') #, mmap_mode='r'
     print(f"Loaded Gabor filter library from {libpath} with shape {library.shape}")
 
     dwt_name= f"{downsampled_video_path.stem}_lib{"_".join([str(x) for x in library.shape])}dwt.npy"

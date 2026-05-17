@@ -77,7 +77,7 @@ params=makeFilterParamDict(screen_x, screen_y, visual_coverage, full_screen_cove
 lib_path, sidecar_path = make_and_save_FilterLibrary(temppath, params)
 
 #-- load the library and parameters back 
-library = np.load(lib_path)
+library = np.load(lib_path, mmap_mode='r')
 print(f"Loaded Gabor filter library from {lib_path} with shape {library.shape}")
 
 xs, ys, angles, sizes, freqs, phases, visual_coverage, full_screen_coverage, screen_x, screen_y = loadFilterParamDict(sidecar_path)
@@ -93,7 +93,7 @@ dwt_path=compute_and_save_dwt(downsampled_video_path, lib_path)
 # -----------------------------------------------
 # compute the RFs
 
-dwt = np.load(dwt_path)
+dwt = np.load(dwt_path, mmap_mode='r')
 print(f"dwt shape: {dwt.shape} (n_frames, (feature dimensions...))")
 spks=np.load(spks_path)
 print(f"spks shape: {spks.shape} (n_trials, n_frames, n_neurons)")
