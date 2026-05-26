@@ -1,7 +1,10 @@
+# this is a stub.
+# performs Step2 according to Skriabine S. et al 2026.
+
 import numpy as np
 import matplotlib.pyplot as plt
-from wavelet_utils import make_and_save_FilterLibrary, makeFilterParamDict, loadFilterParamDict, downscale_binary_video, compute_and_save_dwt
-from analysis_utils import FeatureSearch_correlation_batched, compute_respcorr_split_half, dwt_amp_phase_torch_batched
+from wavelet_utils import make_and_save_FilterLibrary, makeFilterParamDict, loadFilterParamDict, compute_and_save_dwt
+from analysis_utils import FeatureSearch_correlation_batched, compute_respcorr_split_half, dwt_amp_phase_torch_batched, downscale_binary_video
 
 
 #paths:

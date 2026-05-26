@@ -1,10 +1,125 @@
 import numpy as np
 import torch
 import gc
+import cv2
+from pathlib import Path
 from tqdm import tqdm
 from torch_utils import handle_torch_device, print_cuda_tensors_mem
 from itertools import combinations
 
+def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x, screen_y=None, output_path=None, force=False):
+    """
+    Crop and downscale a binary visual stimulus video.
+    
+    Adapted from: https://github.com/skriabineSop/waven WaveletGenerator.py downsample_video_binary
+
+    Parameters
+    ----------
+    path : str or Path
+        Input .mp4 file.
+    full_screen_coverage : list/tuple
+        [az_left, az_right, el_bottom, el_top] in visual degrees for the full video.
+    visual_coverage : list/tuple
+        [az_left, az_right, el_bottom, el_top] in visual degrees to keep.
+    screen_x, screen_y : int
+        Output frame size e.g. (100, 66).        
+    output_path : str or Path, optional
+        Output .npy path. If None, saves next to input.
+
+    Returns
+    -------
+    Path
+        Path to saved .npy file.
+
+    Saved array shape
+    -----------------
+    (n_frames, screen_x, screen_y), dtype bool
+    """
+    
+    threshold=127 #Pixel threshold for binarization.
+    
+    full = np.asarray(full_screen_coverage, dtype=float)
+    vis = np.asarray(visual_coverage, dtype=float)
+
+    az_left, az_right, el_bottom, el_top = full
+    v_az_left, v_az_right, v_el_bottom, v_el_top = vis
+    
+    if screen_y is None:
+        # keep aspect ratio of visual coverage
+        screen_y = int(screen_x * (v_el_top - v_el_bottom) / (v_az_right - v_az_left))
+        print(f"Calculated screen_y={screen_y} to keep aspect ratio of visual coverage.")
+
+    path = Path(path)
+    
+    if output_path is None:
+        output_path = path.with_name(path.stem + f"_scaled{screen_x}x{screen_y}.npy")
+    else:
+        output_path = Path(output_path)
+    
+    print("Generating cropped and downsampled binary video...")
+    if output_path.exists() and not force:
+        print(f"Output file {output_path} already exists. Skipping generation.")
+        return output_path
+
+
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        raise IOError(f"Could not open video: {path}")
+
+    n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    input_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    input_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    if n_frames <= 0:
+        raise ValueError("Could not determine number of frames from video.")
+
+    # Degree -> pixel conversion
+    x0 = round((v_az_left - az_left) / (az_right - az_left) * input_w)
+    x1 = round((v_az_right - az_left) / (az_right - az_left) * input_w)
+
+    # image y goes top -> bottom, elevation goes bottom -> top
+    y0 = round((el_top - v_el_top) / (el_top - el_bottom) * input_h)
+    y1 = round((el_top - v_el_bottom) / (el_top - el_bottom) * input_h)
+
+    x0, x1 = sorted((max(0, x0), min(input_w, x1)))
+    y0, y1 = sorted((max(0, y0), min(input_h, y1)))
+
+    print(f"Input video: {n_frames} frames, {input_w} x {input_h}")
+    print(f"Crop pixels: x={x0}:{x1}, y={y0}:{y1}")
+    print(f"Output shape: ({n_frames}, {screen_x}, {screen_y})")
+    
+    out = np.lib.format.open_memmap(
+        output_path,
+        mode="w+",
+        dtype=bool,
+        shape=(n_frames, screen_x, screen_y),
+    )
+
+
+    for frame_idx in tqdm(range(n_frames)):
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        gray = frame[:, :, 0]
+
+        cropped = gray[y0:y1, x0:x1]
+
+        resized = cv2.resize(
+            cropped,
+            dsize=(screen_x, screen_y),
+            interpolation=cv2.INTER_AREA,
+        )
+
+        binary = resized > threshold
+        out[frame_idx] = binary.T
+
+    cap.release()
+    out.flush()
+    del out
+
+    print(f"Saved downsampled binary video: {output_path}")
+    return output_path
 
 def correctNeuronPos(neuron_pos, resolution=2.14):
     """
