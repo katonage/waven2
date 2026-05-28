@@ -185,9 +185,9 @@ def compute_respcorr_split_half(resps_all):
     respcorr = np.zeros(n_neurons)
 
     for ni in tqdm(range(n_neurons), desc="Computing split-half correlation per neuron"):
-        corrs = []
+        corrs = np.empty(len(splits))
 
-        for groupA in splits:
+        for i, groupA in enumerate(splits):
             groupA = list(groupA)
             groupB = [i for i in range(n_trials) if i not in groupA]
 
@@ -201,7 +201,7 @@ def compute_respcorr_split_half(resps_all):
             c = np.corrcoef(A, B)[0, 1]
 
             if not np.isnan(c):
-                corrs.append(c)
+                corrs[i] = c
 
         if len(corrs) == 0:
             respcorr[ni] = np.nan
@@ -294,7 +294,7 @@ def FeatureSearch_correlation_batched(stim, resp, device="cuda", feature_batch_s
 
 def dwt_amp_phase_torch_batched(dwt, device="cuda", batch_size=256, output_dtype=np.float32, ):
     """
-    Compute _squared_ amplitude and phase from real/imag array using torch batching.
+    Compute amplitude and phase from real/imag array using torch batching.
 
     Parameters
     ----------
@@ -309,7 +309,7 @@ def dwt_amp_phase_torch_batched(dwt, device="cuda", batch_size=256, output_dtype
 
     Returns
     -------
-    dwt_squared : np.ndarray
+    dwt_amplitude : np.ndarray
         Shape dwt.shape[:-1].
     dwt_phase : np.ndarray
         Shape dwt.shape[:-1].
@@ -319,7 +319,7 @@ def dwt_amp_phase_torch_batched(dwt, device="cuda", batch_size=256, output_dtype
 
     out_shape = dwt.shape[:-1]
 
-    dwt_squared = np.empty(out_shape, dtype=output_dtype)
+    dwt_amplitude = np.empty(out_shape, dtype=output_dtype)
     dwt_phase = np.empty(out_shape, dtype=output_dtype)
 
     n0 = dwt.shape[0]
@@ -337,23 +337,23 @@ def dwt_amp_phase_torch_batched(dwt, device="cuda", batch_size=256, output_dtype
             real = batch[..., 0]
             imag = batch[..., 1]
 
-            amp2 = real * real + imag * imag
+            amp = torch.sqrt(real * real + imag * imag) 
             phase = torch.atan2(imag, real)
             phase = phase + torch.pi
 
-            dwt_squared[i0:i1] = amp2.cpu().numpy()
+            dwt_amplitude[i0:i1] = amp.cpu().numpy()
             dwt_phase[i0:i1] = phase.cpu().numpy()
 
         
-        print_cuda_tensors_mem({"batch": batch, "real": real, "imag": imag, "amp2": amp2, "phase": phase})
-        del batch, real, imag, amp2, phase
+        print_cuda_tensors_mem({"batch": batch, "real": real, "imag": imag, "amp": amp, "phase": phase})
+        del batch, real, imag, amp, phase
 
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
     gc.collect()
 
-    return dwt_squared, dwt_phase
+    return dwt_amplitude, dwt_phase
 
 
 
