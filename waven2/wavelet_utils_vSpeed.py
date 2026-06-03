@@ -214,7 +214,7 @@ def loadFilterParamDict_vS(json_path):
 
 def makeFilterLibrary_vS(paramsdict):
     """
-    Builds a Gabor filter library.
+    Builds a Gabor filter library. We dont't use this as the library is too large to fit in memory. Generate filters on the fly. 
 
     Parameter: paramsdict (dict): A dictionary containing the parameters for Gabor filter generation:
         screen_x, screen_y, screen_t (int): Width, height, and time dimension of the screen in pixels.
@@ -272,6 +272,80 @@ def makeFilterLibrary_vS(paramsdict):
     
     return library, paramsdict
     
+
+def get_filter_from_params(xi, yi, ai, si, fi, di, oi, params):
+    # retrieves a single Gabor filter based on the provided indices and parameters dictionary
+    # xi, yi, ai, si, fi, di, oi are indices corresponding to the parameter arrays in params
+    # params is a dictionary containing the parameters for Gabor filter generation
+    # returns the Gabor filter
+
+    xs = params['xs']
+    ys = params['ys']
+    angles = params['angles']
+    sizes = params['sigmas']
+    freqs = params['frequencies']
+    drifts = params['drifts']
+    phases = params['offsets']
+    visual_coverage = params['visual_coverage']
+    screen_x = params['screen_x']
+    screen_y = params['screen_y']
+    screen_t = params['screen_t']
+
+    filt = makeGaborFilter_visual_vS(
+        i_deg=xs[xi],
+        j_deg=ys[yi],
+        size_deg=sizes[si],
+        angle=angles[ai],
+        freq_deg=freqs[fi],
+        drift_deg=drifts[di],
+        phase=phases[oi],
+        visual_coverage=visual_coverage,
+        screen_x=screen_x,
+        screen_y=screen_y,
+        screen_t=screen_t
+    )
+    return filt
+
+def get_filter_vector(filt, visual_coverage):
+    # returns coordinates of a vector depicting the filter's motion in visual space
+    # filter shape is (t, x, y)
+    # used for visualizing filters
+    az_left, az_right, el_bottom, el_top = visual_coverage
+    
+    def get_center(frame):
+        x, y = np.indices(frame.shape)
+        frame = np.abs(frame) 
+        total = frame.sum()
+
+        x_center = (x * frame).sum() / total
+        y_center = (y * frame).sum() / total
+
+        return x_center, y_center
+    
+    def to_xy_coords(x_center, y_center):
+        x_center = np.interp(x_center, np.arange(filt.shape[1]), np.linspace(az_left, az_right, filt.shape[1]))
+        y_center = np.interp(y_center, np.arange(filt.shape[2]), np.linspace(el_bottom, el_top, filt.shape[2]))
+        return x_center, y_center
+    
+    t0=filt.shape[0]//2
+    if t0==0:
+        x_center, y_center = get_center(filt[0])
+        x_center, y_center = to_xy_coords(x_center, y_center)
+        return [x_center, x_center], [y_center, y_center]
+    
+    t2=t0+1
+    x_center0, y_center0 = get_center(filt[t0])
+    x_center2, y_center2 = get_center(filt[t2])
+    x_center0, y_center0 = to_xy_coords(x_center0, y_center0)
+    x_center2, y_center2 = to_xy_coords(x_center2, y_center2)
+    
+    xv = [x_center0+(x_center0-x_center2), x_center2]
+    yv = [y_center0+(y_center0-y_center2), y_center2]
+    dx = xv[1] - xv[0]
+    dy = yv[1] - yv[0]
+
+    return xv[0], yv[0], dx, dy
+
 def filename_fromFilterParam(indict):
         x = indict['xs']
         y = indict['ys']
@@ -309,7 +383,7 @@ def filename_fromFilterParam(indict):
   
 
 def make_and_save_FilterLibrary_vS(path, paramsdict, force=False):
-    """Generates a Gabor filter library and saves it to disk.
+    """Generates a Gabor filter library and saves it to disk. We dont't use this as the library is too large to fit in memory. Generate filters on the fly.
 
     Parameters:
         path (str or Path): Directory where the library will be saved.

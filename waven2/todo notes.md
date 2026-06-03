@@ -10,4 +10,4 @@ FOV plots - retinotopy, orientation tuning
         
 parallel analysis on different seed videos
 
-speed brute force-val?
+
