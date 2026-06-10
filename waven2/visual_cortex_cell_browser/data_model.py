@@ -92,6 +92,32 @@ class CellDataModel:
     def filtered_count(self) -> int:
         return int(len(self.filtered_indices))
 
+    @property
+    def series_id(self) -> str:
+        if isinstance(self.metadata, dict):
+            value = self.metadata.get("SeriesID", None)
+            if value is not None:
+                return str(value)
+        if self.df is not None and "SeriesID" in self.df.columns and len(self.df):
+            try:
+                return str(self.df["SeriesID"].dropna().iloc[0])
+            except Exception:
+                pass
+        return "--"
+
+    @property
+    def hdf5_folder(self) -> Optional[Path]:
+        if not isinstance(self.metadata, dict):
+            return None
+        hdf5_file = self.metadata.get("hdf5_file", None)
+        if not hdf5_file:
+            return None
+        try:
+            folder = Path(str(hdf5_file)).expanduser().parent
+            return folder if folder.exists() else None
+        except Exception:
+            return None
+
     def load_cells(self, path: str | Path) -> None:
         path = Path(path)
         with path.open("rb") as f:
@@ -111,7 +137,6 @@ class CellDataModel:
         df = first.copy()
         if "cell_id" not in df.columns:
             df["cell_id"] = np.arange(len(df), dtype=int)
-        # Keep row order stable, but allow fast .loc by cell_id when possible.
         df = df.reset_index(drop=True)
 
         missing_required = [c for c in ["Soma_Xpix", "Soma_Ypix"] if c not in df.columns]
@@ -255,3 +280,8 @@ class CellDataModel:
         if self.df is None or field not in self.df.columns or self.filtered_indices.size == 0:
             return np.array([])
         return pd.to_numeric(self.df.iloc[self.filtered_indices][field], errors="coerce").to_numpy(dtype=float)
+
+    def numeric_values_for_all(self, field: str) -> np.ndarray:
+        if self.df is None or field not in self.df.columns:
+            return np.array([])
+        return pd.to_numeric(self.df[field], errors="coerce").to_numpy(dtype=float)
