@@ -158,10 +158,10 @@ def makeFilterParamDict_vS(screen_x, screen_y, screen_t, visual_coverage, full_s
         'xs': xs,
         'ys': ys,
         'angles': angles,
-        'sigmas': sigmas,
-        'frequencies': frequencies,
+        'sizes': sigmas,
+        'freqs': frequencies,
         'drifts': drifts,   
-        'offsets': offsets,
+        'phases': offsets,
         'screen_x': screen_x,
         'screen_y': screen_y,
         'screen_t': screen_t,
@@ -201,10 +201,10 @@ def loadFilterParamDict_vS(json_path):
     xs = params['xs']
     ys = params['ys']
     angles = params['angles']
-    sizes = params['sigmas']
-    freqs = params['frequencies']
+    sizes = params['sizes']
+    freqs = params['freqs']
     drifts = params['drifts']
-    phases = params['offsets']
+    phases = params['phases']
     visual_coverage = params['visual_coverage']
     full_screen_coverage = params['full_screen_coverage']
     screen_x = params['screen_x']
@@ -223,10 +223,10 @@ def makeFilterLibrary_vS(paramsdict):
         xs (array-like): Array of x positions (azimuth) in visual degrees.
         ys (array-like): Array of y positions (elevation) in visual degrees.
         angles (array-like): Orientations in radians (typically spanning 0 to π).
-        sigmas (array-like): FWHM of the Gaussian envelope (in visual degrees).
-        frequencies (array-like): Spatial frequencies (cycles per visual degree).
+        sizes (array-like): FWHM of the Gaussian envelope (in visual degrees).
+        freqs (array-like): Spatial frequencies (cycles per visual degree).
         drifts (array-like): Drifts (in visual degree per frame).
-        offsets (array-like): Phase offsets (e.g., 0 and π/2).
+        phases (array-like): Phase offsets (e.g., 0 and π/2).
 
     Returns:
         numpy.ndarray: Gabor filter library of shape
@@ -236,10 +236,10 @@ def makeFilterLibrary_vS(paramsdict):
     xs = paramsdict['xs']
     ys = paramsdict['ys']
     angles = paramsdict['angles']
-    sigmas = paramsdict['sigmas']
-    frequencies = paramsdict['frequencies']
+    sigmas = paramsdict['sizes']
+    frequencies = paramsdict['freqs']
     drifts = paramsdict['drifts']
-    offsets = paramsdict['offsets']
+    offsets = paramsdict['phases']
     screen_x = paramsdict['screen_x']
     screen_y = paramsdict['screen_y']
     screen_t = paramsdict['screen_t']
@@ -282,10 +282,10 @@ def get_filter_from_params(xi, yi, ai, si, fi, di, oi, params):
     xs = params['xs']
     ys = params['ys']
     angles = params['angles']
-    sizes = params['sigmas']
-    freqs = params['frequencies']
+    sizes = params['sizes']
+    freqs = params['freqs']
     drifts = params['drifts']
-    phases = params['offsets']
+    phases = params['phases']
     visual_coverage = params['visual_coverage']
     screen_x = params['screen_x']
     screen_y = params['screen_y']
@@ -350,10 +350,10 @@ def filename_fromFilterParam(indict):
         x = indict['xs']
         y = indict['ys']
         t = indict['angles']
-        s = indict['sigmas']
-        f = indict['frequencies']
+        s = indict['sizes']
+        f = indict['freqs']
         d = indict['drifts']
-        o = indict['offsets']
+        o = indict['phases']
         st = indict['screen_t']
         sx = indict['screen_x']
         sy = indict['screen_y']
@@ -451,10 +451,10 @@ def getWTfromVideo_feature_batched_vS(videodata, paramsdict, device="cuda", feat
     xs = paramsdict['xs']
     ys = paramsdict['ys']
     angles = paramsdict['angles']
-    sigmas = paramsdict['sigmas']
-    frequencies = paramsdict['frequencies']
+    sigmas = paramsdict['sizes']
+    frequencies = paramsdict['freqs']
     drifts = paramsdict['drifts']
-    offsets = paramsdict['offsets']
+    offsets = paramsdict['phases']
     screen_x = paramsdict['screen_x']
     screen_y = paramsdict['screen_y']
     screen_t = paramsdict['screen_t']
