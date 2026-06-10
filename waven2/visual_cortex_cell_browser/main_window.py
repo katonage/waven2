@@ -511,6 +511,8 @@ class SpatialPanel(QWidget):
         self.scatter_item: Optional[pg.ScatterPlotItem] = None
         self.selected_item: Optional[pg.ScatterPlotItem] = None
         self.background_colorbar = None
+        self.scatter_colorbar = None
+        self.scatter_colorbar_image: Optional[pg.ImageItem] = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -537,6 +539,14 @@ class SpatialPanel(QWidget):
             except Exception:
                 pass
             self.background_colorbar = None
+        if self.scatter_colorbar is not None:
+            try:
+                self.plot_widget.getPlotItem().layout.removeItem(self.scatter_colorbar)
+                self.scatter_colorbar.deleteLater()
+            except Exception:
+                pass
+            self.scatter_colorbar = None
+        self.scatter_colorbar_image = None
 
         if model.background_image is None and not model.has_cells:
             text = pg.TextItem(text="No data loaded", anchor=(0.5, 0.5), color=_pg_text_color(self.main_window.is_dark_theme))
@@ -567,7 +577,7 @@ class SpatialPanel(QWidget):
         if model.has_cells:
             self._draw_cell_scatter()
 
-        title = "Spatial view"
+        title = self.main_window.model.series_id
         metric = self.main_window.color_by_combo.currentText()
         if metric != "None":
             title += f" | cells colored by {metric}"
@@ -589,6 +599,7 @@ class SpatialPanel(QWidget):
         else:
             values = model.numeric_values_for_filtered(field)
             brushes = _brushes_from_values(values, metric_label=metric_label)
+            self._add_scatter_colorbar(values, metric_label)
 
         spots = []
         for xi, yi, idx, brush in zip(x, y, ilocs, brushes):
@@ -609,6 +620,69 @@ class SpatialPanel(QWidget):
                 pen=pg.mkPen(255, 255, 0, 255, width=2),
             )
             self.plot_widget.addItem(self.selected_item)
+
+    def _add_scatter_colorbar(self, values: np.ndarray, metric_label: str) -> None:
+        finite = np.asarray(values, dtype=float)
+        finite = finite[np.isfinite(finite)]
+        if finite.size == 0:
+            return
+
+        metric = metric_label.lower()
+        if metric in ["angle", "phase", "Angle_fit_ori"]:
+            vmax_abs = float(np.nanmax(np.abs(finite)))
+            if metric == "angle":
+                period = np.pi if vmax_abs <= 2 * np.pi + 1e-6 else 180.0
+            else:
+                period = 2 * np.pi if vmax_abs <= 2 * np.pi + 1e-6 else 360.0
+            levels = (0.0, float(period))
+            cmap = _mpl_pg_colormap("hsv")
+        else:
+            vmin, vmax = float(np.nanmin(finite)), float(np.nanmax(finite))
+            if vmin == vmax:
+                vmax = vmin + 1.0
+            levels = (vmin, vmax)
+            cmap = _mpl_pg_colormap("rainbow")
+
+        # Dummy ImageItem used only to drive the second colorbar. It is not added
+        # to the ViewBox, so it will not appear over the spatial image.
+        dummy = pg.ImageItem()
+        try:
+            dummy.setLookupTable(cmap.getLookupTable(nPts=256))
+        except Exception:
+            pass
+        dummy.setImage(np.array([[levels[0], levels[1]]], dtype=float), autoLevels=False)
+        dummy.setLevels(levels)
+        self.scatter_colorbar_image = dummy
+
+        try:
+            plot_item = self.plot_widget.getPlotItem()
+
+            self.scatter_colorbar = pg.ColorBarItem(
+                values=levels,
+                colorMap=cmap,
+                width=18,
+                label=metric_label,
+                rounding=1e-10,
+                interactive=False,
+            )
+
+            # Link the colorbar to the dummy ImageItem, but do NOT let PyQtGraph
+            # auto-insert it into the default colorbar cell.
+            self.scatter_colorbar.setImageItem(dummy, insert_in=None)
+
+            # Background colorbar inserted by addColorBar() occupies row 2, col 5.
+            # Put scatter/property colorbar one column further right.
+            plot_item.layout.addItem(self.scatter_colorbar, 2, 6)
+
+            # Optional: keep the extra colorbar narrow.
+            try:
+                plot_item.layout.setColumnFixedWidth(6, 55)
+            except Exception:
+                pass
+
+        except Exception:
+            self.scatter_colorbar = None
+            self.scatter_colorbar_image = None
 
     def reset_background_colorbar(self) -> None:
         if self.image_item is not None and self.main_window.model.background_image is not None:
@@ -703,7 +777,7 @@ class TemporalTracePanel(QWidget):
         self.temporal_view.getPlotItem().showAxes(True, showValues=(True, False, False, True))
         self.temporal_view.getAxis("right").setStyle(showValues=False)
         self.temporal_view.setLabel("bottom", "Time", units="s")
-        self.temporal_view.setLabel("left", "Cell mean activity")
+        self.temporal_view.setLabel("left", "Cell activity")
         self.temporal_view.setLabel("right", "")
 
         if not model.has_cells or selected is None:
@@ -780,6 +854,15 @@ def _brushes_from_values(values: np.ndarray, metric_label: str = "") -> list:
         rgba = cmap(float(nval))
         brushes.append(pg.mkBrush(*(int(255 * c) for c in rgba[:3]), 220))
     return brushes
+
+
+def _mpl_pg_colormap(name: str):
+    cmap = mpl_cm.get_cmap(name)
+    positions = np.linspace(0.0, 1.0, 256)
+    colors = np.asarray(cmap(positions) * 255, dtype=np.ubyte)
+    return pg.ColorMap(pos=positions, color=colors)
+
+
 
 
 def _as_numeric_array(value) -> Optional[np.ndarray]:
