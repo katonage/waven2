@@ -11,14 +11,14 @@ try:
 except Exception:  # package import fallback
     from .data_model import CellDataModel, TUNING_SPECS
 try:
-    from ..analysis_utils import sine1x
+    from ..analysis_utils import sine1x, fit_quadratic, restore_fit_quadratic
 except Exception:  # package import fallback
     from pathlib import Path
     import sys
 
     parent_dir = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(parent_dir))
-    from analysis_utils import sine1x  
+    from analysis_utils import sine1x, fit_quadratic, restore_fit_quadratic
 
 def _as_numeric_array(value) -> Optional[np.ndarray]:
     if value is None:
@@ -119,32 +119,38 @@ class MatplotlibRenderer:
         except Exception:
             ax.set_title(label)
         
-                
-
+        #fit plots
         if label == "angle":
-            self._plot_angle_fit(ax, x, row)
+            # The notebook stores angles and orientation in radians:
+            amp = row.get("Angle_fit_amplitude", np.nan)
+            const = row.get("Angle_fit_constant", np.nan)
+            ori = row.get("Angle_fit_ori", np.nan)
+            try:
+                amp = float(amp)
+                const = float(const)
+                ori = float(ori)
+                if not np.all(np.isfinite([amp, const, ori])) or np.asarray(x).size < 2:
+                    return
+                #x = np.asarray(x, dtype=float)
+                xf = np.linspace(0, np.pi, 100)
+                yf = sine1x(xf, const, amp, ori)
+                #yf = const + amp * (np.cos(2.0 * (xf - ori)) + 1.0) / 2.0
+                ax.plot(xf, yf, color="0.45", linewidth=0.9)
+                ax.axvline(ori, color="0.45", linewidth=0.6)
+                #ax.axhline(const, color="0.45", linestyle="--", linewidth=0.5)
+                ax.set_title(f"angle | fitted ori={np.rad2deg(ori):.1f}°")
+            except Exception:
+                pass
+        
+        if label in ["x", "y", "size", "freq", "drift"]:
+            best, fit_params = fit_quadratic(x, y)
+            ax.axvline(best, color="0.45", linewidth=0.6)
 
-    def _plot_angle_fit(self, ax, x: np.ndarray, row: pd.Series) -> None:
-        # The notebook stores angles and orientation in radians:
-        amp = row.get("Angle_fit_amplitude", np.nan)
-        const = row.get("Angle_fit_constant", np.nan)
-        ori = row.get("Angle_fit_ori", np.nan)
-        try:
-            amp = float(amp)
-            const = float(const)
-            ori = float(ori)
-            if not np.all(np.isfinite([amp, const, ori])) or np.asarray(x).size < 2:
-                return
-            x = np.asarray(x, dtype=float)
-            xf = np.linspace(0, np.pi, 100)
-            yf = sine1x(xf, const, amp, ori)
-            #yf = const + amp * (np.cos(2.0 * (xf - ori)) + 1.0) / 2.0
-            ax.plot(xf, yf, color="0.45", linewidth=0.9)
-            ax.axvline(ori, color="0.45", linewidth=0.6)
-            #ax.axhline(const, color="0.45", linestyle="--", linewidth=0.5)
-            ax.set_title(f"angle | fitted ori={np.rad2deg(ori):.1f}°")
-        except Exception:
-            return
+            if fit_params is not None:
+                x_fit, y_fit = restore_fit_quadratic(fit_params)
+                ax.plot(x_fit, y_fit, color="0.45", linewidth=0.9)
+                ax.set_title(f"{ax.get_title()} | fitted={best:.1f}")
+        
 
     def _plot_tuning_map(self, ax, model: CellDataModel, row: pd.Series) -> None:
         ax.set_title("2D RF")

@@ -475,3 +475,121 @@ def fit_sine1x(x, y):
         "amplitude": amplitude,
         "orientation": orientation,
     }
+
+def fit_quadratic(x, y, n_points=4):
+    """
+    Return refined x-position of the maximum using a local quadratic fit.
+
+    Returns
+    -------
+    x_peak : float
+        Refined x-position of the maximum.
+        If fitting is not safe, this is the discrete maximum x.
+
+    fit_info : tuple or None
+        Minimal information needed to reproduce the fitted curve:
+            (a, b, c, x_min_fit, x_max_fit)
+
+        If None, no accepted fit was used.
+    """
+
+    def _local_peak_indices(x, y, imax, n_points=4):
+        """
+        Select local fit points around the maximum.
+
+        For n_points=4:
+        - maximum point
+        - stronger immediate neighbor
+        - one more point outside the pair on each side, if available
+        """
+        n = len(x)
+        n_points = max(3, min(int(n_points), n))
+
+        if n <= n_points:
+            return np.arange(n)
+
+        if n_points % 2 == 1:
+            half = n_points // 2
+            start = max(0, imax - half)
+            stop = min(n, start + n_points)
+            start = max(0, stop - n_points)
+            return np.arange(start, stop)
+
+        # Even n_points: use max + stronger immediate neighbor as core.
+        # This function is called only for non-edge maxima.
+        if y[imax - 1] >= y[imax + 1]:
+            lo, hi = imax - 1, imax
+        else:
+            lo, hi = imax, imax + 1
+
+        selected = set(range(lo, hi + 1))
+        left = lo - 1
+        right = hi + 1
+
+        while len(selected) < n_points and (left >= 0 or right < n):
+            if left >= 0 and len(selected) < n_points:
+                selected.add(left)
+                left -= 1
+            if right < n and len(selected) < n_points:
+                selected.add(right)
+                right += 1
+
+        return np.array(sorted(selected), dtype=int)
+
+    x = np.asarray(x, dtype=float).ravel()
+    y = np.asarray(y, dtype=float).ravel()
+
+    valid = np.isfinite(x) & np.isfinite(y)
+    x = x[valid]
+    y = y[valid]
+
+    if len(x) == 0:
+        return np.nan, None
+
+    order = np.argsort(x)
+    x = x[order]
+    y = y[order]
+
+    imax = int(np.argmax(y))
+    x0 = float(x[imax])
+
+    # Edge maximum: return the edge. Never extrapolate.
+    if imax == 0 or imax == len(x) - 1:
+        return x0, None
+
+    if len(x) < 3:
+        return x0, None
+
+    idx = _local_peak_indices(x, y, imax, n_points=n_points)
+    if len(idx) < 3:
+        return x0, None
+
+    xf = x[idx]
+    yf = y[idx]
+
+    a, b, c = np.polyfit(xf, yf, deg=2)
+
+    # A maximum requires a downward-opening parabola.
+    if not np.isfinite(a) or not np.isfinite(b) or a >= 0:
+        return x0, None
+
+    x_peak = float(-b / (2 * a))
+
+    # No extrapolation: accept only inside fitted data range.
+    if x_peak < xf.min() or x_peak > xf.max():
+        return x0, None
+    
+    # further constrain to be within the neighbors of imax (imax already checked to be non-edge)
+    if x_peak < x[imax - 1] or x_peak > x[imax + 1]:
+        return x0, None
+
+    fit_info = (float(a), float(b), float(c), float(xf.min()), float(xf.max()))
+    return x_peak, fit_info
+
+def restore_fit_quadratic(fit_info, n_points=100):
+    if fit_info is None:
+        raise ValueError("fit_info cannot be None")
+    a, b, c, x_min_fit, x_max_fit = fit_info
+    x_fit = np.linspace(x_min_fit, x_max_fit, n_points)
+    y_fit = a * x_fit**2 + b * x_fit + c
+    return x_fit, y_fit

@@ -513,6 +513,9 @@ class SpatialPanel(QWidget):
         self.background_colorbar = None
         self.scatter_colorbar = None
         self.scatter_colorbar_image: Optional[pg.ImageItem] = None
+        self.no_data_text: Optional[pg.TextItem] = None
+        self._background_token = None
+        self._gray_cmap = pg.colormap.get("gray", source="matplotlib")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -527,11 +530,115 @@ class SpatialPanel(QWidget):
         self.plot_widget.sceneObj.sigMouseClicked.connect(self._on_mouse_clicked)
 
     def update_spatial_view(self) -> None:
+        """Update the spatial panel without recreating the whole PlotItem.
+
+        The background image and its colorbar are persistent. This preserves
+        user-adjusted contrast/colorbar levels while filters, scatter colors,
+        marker size, or selected cell are changed. Only the scatter layer and
+        the scatter-property colorbar are rebuilt on ordinary display updates.
+        """
         model = self.main_window.model
-        self.plot_widget.clear()
-        self.image_item = None
-        self.scatter_item = None
-        self.selected_item = None
+
+        if model.background_image is None and not model.has_cells:
+            self._remove_background_layer()
+            self._clear_scatter_layer()
+            self._show_no_data_text()
+            self.plot_widget.getPlotItem().setTitle("Spatial view")
+            return
+
+        self._hide_no_data_text()
+        self._update_background_layer()
+        self._update_scatter_layer()
+        self._update_title_and_axes()
+
+    # ------------------------------------------------------------ background
+    def _background_model_token(self):
+        model = self.main_window.model
+        image = model.background_image
+        if image is None:
+            return None
+        return (
+            id(image),
+            tuple(image.shape),
+            float(model.resolution_x_um),
+            float(model.resolution_y_um),
+        )
+
+    def _update_background_layer(self) -> None:
+        model = self.main_window.model
+        image = model.background_image
+        token = self._background_model_token()
+
+        if image is None:
+            self._remove_background_layer()
+            return
+
+        # If the exact background image is already displayed, leave it alone.
+        # This is the key point: do not reset levels or recreate colorbar.
+        if self.image_item is not None and token == self._background_token:
+            return
+
+        previous_levels = self._current_background_levels()
+        self._remove_background_layer()
+
+        self.image_item = pg.ImageItem()
+        self.image_item.setZValue(-10)
+        try:
+            self.image_item.setLookupTable(self._gray_cmap.getLookupTable(nPts=256))
+        except Exception:
+            pass
+        self.image_item.setImage(image, autoLevels=False)
+        self.image_item.setRect(
+            QRectF(
+                0,
+                0,
+                image.shape[0] * model.resolution_x_um,
+                image.shape[1] * model.resolution_y_um,
+            )
+        )
+        self.plot_widget.addItem(self.image_item)
+
+        finite = image[np.isfinite(image)]
+        if finite.size:
+            default_levels = (float(np.nanmin(finite)), float(np.nanmax(finite)))
+            levels = previous_levels if previous_levels is not None else default_levels
+            self.image_item.setLevels(levels)
+
+        try:
+            self.background_colorbar = self.plot_widget.getPlotItem().addColorBar(
+                self.image_item,
+                colorMap=self._gray_cmap,
+                rounding=1e-10,
+            )
+            if finite.size:
+                try:
+                    self.background_colorbar.setLevels(self.image_item.getLevels())
+                except Exception:
+                    pass
+        except Exception:
+            self.background_colorbar = None
+
+        self._background_token = token
+
+    def _current_background_levels(self) -> Optional[tuple[float, float]]:
+        if self.image_item is None:
+            return None
+        try:
+            levels = self.image_item.getLevels()
+            if levels is None:
+                return None
+            return (float(levels[0]), float(levels[1]))
+        except Exception:
+            return None
+
+    def _remove_background_layer(self) -> None:
+        if self.image_item is not None:
+            try:
+                self.plot_widget.removeItem(self.image_item)
+            except Exception:
+                pass
+            self.image_item = None
+
         if self.background_colorbar is not None:
             try:
                 self.plot_widget.getPlotItem().layout.removeItem(self.background_colorbar)
@@ -539,6 +646,43 @@ class SpatialPanel(QWidget):
             except Exception:
                 pass
             self.background_colorbar = None
+
+        self._background_token = None
+
+    def reset_background_colorbar(self) -> None:
+        if self.image_item is not None and self.main_window.model.background_image is not None:
+            image = self.main_window.model.background_image
+            finite = image[np.isfinite(image)]
+            if finite.size:
+                levels = (float(np.nanmin(finite)), float(np.nanmax(finite)))
+                self.image_item.setLevels(levels)
+                if self.background_colorbar is not None:
+                    try:
+                        self.background_colorbar.setLevels(levels)
+                    except Exception:
+                        pass
+
+    # --------------------------------------------------------------- scatter
+    def _update_scatter_layer(self) -> None:
+        self._clear_scatter_layer()
+        if self.main_window.model.has_cells:
+            self._draw_cell_scatter()
+
+    def _clear_scatter_layer(self) -> None:
+        if self.scatter_item is not None:
+            try:
+                self.plot_widget.removeItem(self.scatter_item)
+            except Exception:
+                pass
+            self.scatter_item = None
+
+        if self.selected_item is not None:
+            try:
+                self.plot_widget.removeItem(self.selected_item)
+            except Exception:
+                pass
+            self.selected_item = None
+
         if self.scatter_colorbar is not None:
             try:
                 self.plot_widget.getPlotItem().layout.removeItem(self.scatter_colorbar)
@@ -547,43 +691,6 @@ class SpatialPanel(QWidget):
                 pass
             self.scatter_colorbar = None
         self.scatter_colorbar_image = None
-
-        if model.background_image is None and not model.has_cells:
-            text = pg.TextItem(text="No data loaded", anchor=(0.5, 0.5), color=_pg_text_color(self.main_window.is_dark_theme))
-            self.plot_widget.addItem(text)
-            self.plot_widget.getPlotItem().setTitle("Spatial view")
-            return
-
-        if model.background_image is not None:
-            image = model.background_image
-            self.image_item = pg.ImageItem()
-            gray_cmap = pg.colormap.get("gray", source="matplotlib") 
-            try:
-                self.image_item.setLookupTable(gray_cmap.getLookupTable(nPts=256))
-            except Exception:
-                pass
-            self.image_item.setImage(image, autoLevels=False)
-            self.image_item.setRect(QRectF(0, 0, image.shape[0] * model.resolution_x_um, image.shape[1] * model.resolution_y_um))
-            self.plot_widget.addItem(self.image_item)
-            finite = image[np.isfinite(image)]
-            if finite.size:
-                levels = (float(np.nanmin(finite)), float(np.nanmax(finite)))
-                self.image_item.setLevels(levels)
-            try:
-                self.background_colorbar = self.plot_widget.getPlotItem().addColorBar(self.image_item, colorMap=gray_cmap, rounding=1e-10)
-            except Exception:
-                self.background_colorbar = None
-
-        if model.has_cells:
-            self._draw_cell_scatter()
-
-        title = self.main_window.model.series_id
-        metric = self.main_window.color_by_combo.currentText()
-        if metric != "None":
-            title += f" | cells colored by {metric}"
-        self.plot_widget.getPlotItem().setTitle(title)
-        self.plot_widget.getPlotItem().setLabel("bottom", "x (µm)")
-        self.plot_widget.getPlotItem().setLabel("left", "y (µm)")
 
     def _draw_cell_scatter(self) -> None:
         model = self.main_window.model
@@ -605,6 +712,7 @@ class SpatialPanel(QWidget):
         for xi, yi, idx, brush in zip(x, y, ilocs, brushes):
             spots.append({"pos": (float(xi), float(yi)), "data": int(idx), "brush": brush, "pen": pg.mkPen(None), "size": size})
         self.scatter_item = pg.ScatterPlotItem(spots=spots, pxMode=True)
+        self.scatter_item.setZValue(10)
         self.plot_widget.addItem(self.scatter_item)
 
         if self.main_window.selected_iloc is not None and self.main_window.selected_iloc in set(map(int, ilocs)):
@@ -619,6 +727,7 @@ class SpatialPanel(QWidget):
                 brush=pg.mkBrush(0, 0, 0, 0),
                 pen=pg.mkPen(255, 255, 0, 255, width=2),
             )
+            self.selected_item.setZValue(20)
             self.plot_widget.addItem(self.selected_item)
 
     def _add_scatter_colorbar(self, values: np.ndarray, metric_label: str) -> None:
@@ -628,7 +737,7 @@ class SpatialPanel(QWidget):
             return
 
         metric = metric_label.lower()
-        if metric in ["angle", "phase", "Angle_fit_ori"]:
+        if metric in ["angle", "phase", "angle_fit_ori"]:
             vmax_abs = float(np.nanmax(np.abs(finite)))
             if metric == "angle":
                 period = np.pi if vmax_abs <= 2 * np.pi + 1e-6 else 180.0
@@ -674,7 +783,6 @@ class SpatialPanel(QWidget):
             # Put scatter/property colorbar one column further right.
             plot_item.layout.addItem(self.scatter_colorbar, 2, 6)
 
-            # Optional: keep the extra colorbar narrow.
             try:
                 plot_item.layout.setColumnFixedWidth(6, 55)
             except Exception:
@@ -684,19 +792,35 @@ class SpatialPanel(QWidget):
             self.scatter_colorbar = None
             self.scatter_colorbar_image = None
 
-    def reset_background_colorbar(self) -> None:
-        if self.image_item is not None and self.main_window.model.background_image is not None:
-            image = self.main_window.model.background_image
-            finite = image[np.isfinite(image)]
-            if finite.size:
-                levels = (float(np.nanmin(finite)), float(np.nanmax(finite)))
-                self.image_item.setLevels(levels)
-                if self.background_colorbar is not None:
-                    try:
-                        self.background_colorbar.setLevels(levels)
-                    except Exception:
-                        pass
+    # --------------------------------------------------------------- labels
+    def _show_no_data_text(self) -> None:
+        if self.no_data_text is None:
+            self.no_data_text = pg.TextItem(
+                text="No data loaded",
+                anchor=(0.5, 0.5),
+                color=_pg_text_color(self.main_window.is_dark_theme),
+            )
+            self.plot_widget.addItem(self.no_data_text)
+        self.no_data_text.setPos(0, 0)
 
+    def _hide_no_data_text(self) -> None:
+        if self.no_data_text is not None:
+            try:
+                self.plot_widget.removeItem(self.no_data_text)
+            except Exception:
+                pass
+            self.no_data_text = None
+
+    def _update_title_and_axes(self) -> None:
+        title = self.main_window.model.series_id
+        metric = self.main_window.color_by_combo.currentText()
+        if metric != "None":
+            title += f" | cells colored by {metric}"
+        self.plot_widget.getPlotItem().setTitle(title)
+        self.plot_widget.getPlotItem().setLabel("bottom", "x (µm)")
+        self.plot_widget.getPlotItem().setLabel("left", "y (µm)")
+
+    # --------------------------------------------------------------- events
     def _on_mouse_moved(self, scene_pos) -> None:
         model = self.main_window.model
         if not self.plot_widget.sceneBoundingRect().contains(scene_pos):
