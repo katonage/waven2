@@ -331,7 +331,7 @@ def get_filter_vector(filt, visual_coverage):
     if t0==0:
         x_center, y_center = get_center(filt[0])
         x_center, y_center = to_xy_coords(x_center, y_center)
-        return [x_center, x_center], [y_center, y_center]
+        return x_center, y_center, 0, 0
     
     t2=t0+1
     x_center0, y_center0 = get_center(filt[t0])
