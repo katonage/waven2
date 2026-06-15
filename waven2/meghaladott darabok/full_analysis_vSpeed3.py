@@ -15,89 +15,12 @@ import json
 import pandas as pd
 
 from wavelet_utils_vSpeed import loadFilterParamDict_vS, makeFilterParamDict_vS, saveFilterParamDict_vS, filename_fromFilterParam, compute_and_save_dwt_vS
-from analysis_utils import compute_respcorr_split_half, FeatureSearch_correlation_batched, fit_sine1x, sine1x, dwt_amp_phase_torch_batched
+from analysis_utils import compute_respcorr_split_half, FeatureSearch_correlation_batched, fit_sine1x, sine1x, dwt_amp_phase_torch_batched, gaussian_filter1d_torch_axis0_chunked
 from scipy.ndimage import gaussian_filter1d
 
 import torch
-import torch.nn.functional as F
+
 from tqdm import tqdm
-
-
-def gaussian_filter1d_torch_axis0_chunked(
-        x,
-        sigma,
-        chunk_size=20_000,
-        truncate=4.0,
-        device=None,
-        dtype=torch.float32,
-        return_dtype=None,
-    ):
-    """
-    Chunked Gaussian smoothing along axis=0.
-
-    x shape: (time, channels) or (time, ...)
-    returns NumPy array with same shape.
-    """
-
-    if sigma <= 0:
-        return x.copy()
-
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    orig_shape = x.shape
-    x2 = x.reshape(orig_shape[0], -1)
-    n_time, n_ch = x2.shape
-
-    if return_dtype is None:
-        return_dtype = x.dtype
-
-    y = np.empty_like(x2, dtype=return_dtype)
-
-    radius = int(truncate * sigma + 0.5)
-
-    grid = torch.arange(
-        -radius,
-        radius + 1,
-        device=device,
-        dtype=dtype
-    )
-
-    kernel = torch.exp(-0.5 * (grid / sigma) ** 2)
-    kernel = kernel / kernel.sum()
-
-    for c0 in tqdm(range(0, n_ch, chunk_size), desc="Gaussian smoothing"):
-        c1 = min(c0 + chunk_size, n_ch)
-
-        # shape: (time, chunk)
-        x_chunk = torch.as_tensor(
-            x2[:, c0:c1],
-            dtype=dtype,
-            device=device
-        )
-
-        # conv1d expects: (batch, channels, time)
-        x_chunk = x_chunk.T[None, :, :]
-
-        k = kernel[None, None, :].repeat(x_chunk.shape[1], 1, 1)
-
-        x_chunk = F.pad(x_chunk, (radius, radius), mode="reflect")
-
-        y_chunk = F.conv1d(
-            x_chunk,
-            k,
-            groups=x_chunk.shape[1]
-        )
-
-        # back to NumPy: (time, chunk)
-        y[:, c0:c1] = y_chunk[0].T.detach().cpu().numpy().astype(return_dtype)
-
-        del x_chunk, y_chunk, k
-
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
-
-    return y.reshape(orig_shape)
 
 
 def full_analysis_vSpeed3(spks_path, downsampled_video_path,
