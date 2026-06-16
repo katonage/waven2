@@ -316,7 +316,7 @@ class MainWindow(QMainWindow):
 
             #self.cells_path_label.setText(f"Cells: {self._short_path(path)}\nSeriesID: {self.model.series_id}")
             self.cells_path_label.setText(f"SeriesID: {self.model.series_id}")
-            self.setWindowTitle(f"Visual Cortex Cell Browser - {Path(path).name}")
+            self.setWindowTitle(f"Visual Cortex Cell Browser - {Path(path).parent.name} / {Path(path).name}")
             self._update_filter_spinbox_ranges()
             self._update_display_options()
 

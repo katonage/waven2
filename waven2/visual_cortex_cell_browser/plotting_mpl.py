@@ -32,7 +32,7 @@ def _as_numeric_array(value) -> Optional[np.ndarray]:
     if arr.size == 0:
         return None
     try:
-        arr = arr.astype(float)
+        arr = np.atleast_1d(arr.astype(float))
     except Exception:
         return None
     return arr

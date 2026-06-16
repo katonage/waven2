@@ -188,7 +188,7 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
 
 def correctNeuronPos(neuron_pos, resolution=2.14):
     """
-    converts neuron position in micronshttps://chatgpt.com/
+    converts neuron position in microns
 
     Parameters:
         neuron_pos (array-like): shape (n_neurons x 2)
@@ -218,7 +218,7 @@ def compute_respcorr_split_half(resps_all):
         - Pearson correlation between the two averages is computed
         - The result is averaged across all possible splits
         
-    This is a more computationally intensive versio of https://github.com/skriabineSop/waven Analysis_Utils.py repetability_trial3
+    This is a more computationally intensive version of https://github.com/skriabineSop/waven Analysis_Utils.py repetability_trial3
 
     Parameters
     ----------
@@ -357,68 +357,113 @@ def FeatureSearch_correlation_batched(stim, resp, device="cuda", feature_batch_s
     return rfs
 
 
-def dwt_amp_phase_torch_batched(dwt, device="cuda", batch_size=256, output_dtype=np.float32, ):
+def dwt_amp_phase_torch_batched(dwt, phases=None, device="cuda", batch_size=8192, output_dtype=np.float32, calculate_phase=False):
     """
-    Compute amplitude and phase from real/imag array using torch batching.
+    Compute amplitude, and optionally phase, from a phase-sampled DWT.
 
     Parameters
     ----------
     dwt : np.ndarray
-        Shape (..., 2), last dim is [real, imag].
+        Shape (..., n_phase). The last dimension contains DWT values sampled
+        at each phase.
+    phases : array-like, optional
+        Shape (n_phase,). Phase values in radians. If None, phases are assumed
+        to be evenly spaced over [0, 2*pi).
     device : str
         "cuda" or "cpu".
     batch_size : int
         Batch size along first axis.
     output_dtype : np.dtype
         Output dtype.
+    calculate_phase : bool
+        Calculate phase if True.
 
     Returns
     -------
     dwt_amplitude : np.ndarray
         Shape dwt.shape[:-1].
     dwt_phase : np.ndarray
-        Shape dwt.shape[:-1].
+        Shape dwt.shape[:-1]. If calculate_phase is True.
     """
 
     device = handle_torch_device(device)
 
+    dwt = np.asarray(dwt)
+    if dwt.ndim < 1:
+        raise ValueError("dwt must have at least one dimension.")
+
+    n_phases = dwt.shape[-1]
+    if n_phases < 1:
+        raise ValueError("dwt must contain at least one phase sample on the last axis.")
+
+    if phases is None:
+        phases = np.linspace(0.0, 1.0 * np.pi, n_phases, endpoint=False, dtype=np.float32)
+        print(f"-- assuming evenly-spaced phases: {phases}")
+    else:
+        phases = np.asarray(phases, dtype=np.float32)
+
+    if phases.shape != (n_phases,):
+        raise ValueError(f"phases shape {phases.shape} must match dwt last dimension ({n_phases},)")
+    
+    simplify = (phases.size==2) and phases[0]==0 and phases[1]==np.pi/2 # that speeds by x1.5
+
     out_shape = dwt.shape[:-1]
+    dwt_flat = dwt.reshape(-1, n_phases)
+    n_items = dwt_flat.shape[0]
 
-    dwt_amplitude = np.empty(out_shape, dtype=output_dtype)
-    dwt_phase = np.empty(out_shape, dtype=output_dtype)
-
-    n0 = dwt.shape[0]
+    dwt_amplitude_flat = np.empty(n_items, dtype=output_dtype)
+    if calculate_phase:
+        dwt_phase_flat = np.empty(n_items, dtype=output_dtype)
 
     with torch.no_grad():
-        for i0 in tqdm(range(0, n0, batch_size), desc="Calculating DWT amplitude and phase"):
-            i1 = min(i0 + batch_size, n0)
+        phase_tensor = torch.as_tensor(phases, dtype=torch.float32, device=device)
+        scale = 2.0 / float(n_phases)
+        cos_phi = torch.cos(phase_tensor)
+        sin_phi = torch.sin(phase_tensor)
 
-            batch = torch.as_tensor(
-                dwt[i0:i1].copy(),
-                dtype=torch.float32,
-                device=device
-            )
+        for i0 in tqdm(range(0, n_items, batch_size), desc="Calculating DWT amplitude and phase"):
+            i1 = min(i0 + batch_size, n_items)
 
-            real = batch[..., 0]
-            imag = batch[..., 1]
+            batch_np = dwt_flat[i0:i1]
+            try:
+                batch = torch.as_tensor(batch_np, dtype=torch.float32, device=device)
+            except (TypeError, ValueError):
+                batch = torch.as_tensor(batch_np.copy(), dtype=torch.float32, device=device)
 
-            amp = torch.sqrt(real * real + imag * imag) 
-            phase = torch.atan2(imag, real)
-            phase = phase + torch.pi
+            if simplify: # that speeds by x1.5
+                real = batch[:, 0]
+                imag = batch[:, 1]
+            else:
+                real = scale * torch.sum(batch * cos_phi, dim=-1)
+                imag = scale * torch.sum(batch * sin_phi, dim=-1)
+            amp = torch.sqrt(real * real + imag * imag)
 
-            dwt_amplitude[i0:i1] = amp.cpu().numpy()
-            dwt_phase[i0:i1] = phase.cpu().numpy()
+            dwt_amplitude_flat[i0:i1] = amp.cpu().numpy()
+            if calculate_phase:
+                phase = torch.atan2(imag, real)
+                dwt_phase_flat[i0:i1] = phase.cpu().numpy()
 
         
-        print_cuda_tensors_mem({"batch": batch, "real": real, "imag": imag, "amp": amp, "phase": phase})
-        del batch, real, imag, amp, phase
+        if n_items > 0:
+            if calculate_phase:
+                print_cuda_tensors_mem({"batch": batch, "real": real, "imag": imag, "amp": amp, "phase": phase})
+            else:
+                print_cuda_tensors_mem({"batch": batch, "real": real, "imag": imag, "amp": amp})
+            del batch_np, batch, real, imag, amp
+            if calculate_phase: del phase
+        del phase_tensor, cos_phi, sin_phi
 
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
     gc.collect()
 
-    return dwt_amplitude, dwt_phase
+    dwt_amplitude = dwt_amplitude_flat.reshape(out_shape)
+    if calculate_phase:
+        dwt_phase = dwt_phase_flat.reshape(out_shape)
+        return dwt_amplitude, dwt_phase
+    else:
+        return dwt_amplitude
 
 def gaussian_filter1d_torch_axis0_chunked(x, sigma, chunk_size=20_000, device='cuda', dtype=torch.float32, return_dtype=None ):
     """

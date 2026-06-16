@@ -5,8 +5,10 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from .main_window import MainWindow
-
+try:
+    from main_window import MainWindow
+except Exception:  # package import fallback
+    from .main_window import MainWindow
 
 def run_gui(cells_path: str | None = None, background_path: str | None = None) -> None:
     app = QApplication.instance()
