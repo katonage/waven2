@@ -4,11 +4,17 @@ import gc
 import cv2
 from pathlib import Path
 from tqdm import tqdm
-from torch_utils import handle_torch_device, print_cuda_tensors_mem
+try:
+    from .torch_utils import handle_torch_device, print_cuda_tensors_mem
+except ImportError:  # Support direct execution from the module directory.
+    from torch_utils import handle_torch_device, print_cuda_tensors_mem
 import torch.nn.functional as F
 from itertools import combinations
+from skimage.registration import optical_flow_tvl1
+from scipy.ndimage import gaussian_filter
 
-def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x, screen_y=None, output_path=None, force=False):
+
+def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x, screen_y=None, output_path=None, generate_optic_flow=False, fps=30, force=False):
     """
     Crop and downscale a binary visual stimulus video.
     
@@ -26,15 +32,22 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
         Output frame size e.g. (100, 66).        
     output_path : str or Path, optional
         Output .npy path. If None, saves next to input.
-
+    generate_optic_flow : bool, optional
+        Generate optic flow to a second file named "_flow".
+    fps : float, optional
+        Input video fps. Effective only if generate_optic_flow is True.
+    force : bool, optional
+        Overwrite existing .npy file. Otherwise, skips if already exists.
     Returns
     -------
     Path
-        Path to saved .npy file.
+        Path to saved .npy file. or if generate_optic_flow is True, returns tuple of paths.
+    
 
     Saved array shape
     -----------------
     (n_frames, screen_x, screen_y), dtype bool
+    (n_frames, 4, screen_x, screen_y), dtype float for the optic flow
     """
     
     threshold=127 #Pixel threshold for binarization.
@@ -56,12 +69,17 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
         output_path = path.with_name(path.stem + f"_scaled{screen_x}x{screen_y}.npy")
     else:
         output_path = Path(output_path)
-    
+
+    if generate_optic_flow:
+        output_path_flow = output_path.with_name(output_path.stem + "_flow.npy")
+            
     print("Generating cropped and downsampled binary video...")
     if output_path.exists() and not force:
         print(f"Output file {output_path} already exists. Skipping generation.")
-        return output_path
-
+        if not generate_optic_flow:
+            return output_path
+        else:
+            return output_path, output_path_flow
 
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
@@ -89,6 +107,9 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
     print(f"Crop pixels: x={x0}:{x1}, y={y0}:{y1}")
     print(f"Output shape: ({n_frames}, {screen_x}, {screen_y})")
     
+    deg_per_px_x = (v_az_right - v_az_left) / screen_x # output pixel dimensions
+    deg_per_px_y = (v_el_top - v_el_bottom) / screen_y
+    
     out = np.lib.format.open_memmap(
         output_path,
         mode="w+",
@@ -96,14 +117,23 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
         shape=(n_frames, screen_x, screen_y),
     )
 
+    if generate_optic_flow:
+        out_flow = np.lib.format.open_memmap(
+            output_path_flow,
+            mode="w+",
+            dtype=float,
+            shape=(n_frames, 4, screen_x, screen_y),
+        )
+        print(f"Output optic flow shape: ({n_frames}, 4, {screen_x}, {screen_y}): flow_x, flow_y, divergence, energy")
 
+    prev_gray = None
     for frame_idx in tqdm(range(n_frames)):
         ret, frame = cap.read()
         if not ret:
             break
 
         gray = frame[:, :, 0]
-
+        
         cropped = gray[y0:y1, x0:x1]
 
         resized = cv2.resize(
@@ -111,16 +141,50 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
             dsize=(screen_x, screen_y),
             interpolation=cv2.INTER_AREA,
         )
+        resized=resized.T # switch to x,y format
 
         binary = resized > threshold
-        out[frame_idx] = binary.T
+        out[frame_idx] = binary
+                
+        if generate_optic_flow:
+            
+            if prev_gray is None:
+                prev_gray = resized
+            
+            flow_y, flow_x = optical_flow_tvl1( # optical flow from previous frame
+                    prev_gray,
+                    resized,
+                    attachment=5.0,
+                    num_warp=4,
+                    num_iter=5,
+                    prefilter=True,
+                )
+                
+            flow_x = flow_x * deg_per_px_x * fps # convert to visual degrees per sec
+            flow_y = flow_y * deg_per_px_y * fps
+            
+            flow_y = gaussian_filter(flow_y, sigma=3)
+            flow_x = gaussian_filter(flow_x, sigma=3)
+            
+            dfx_dy, dfx_dx = np.gradient(flow_x)
+            dfy_dy, dfy_dx = np.gradient(flow_y)
+
+            energy = ( dfx_dx**2 + dfx_dy**2 + dfy_dx**2 + dfy_dy**2 ) # energy (1/s^2)
+            divergence = dfx_dx + dfy_dy #divergence  (1/s)
+            out_flow[frame_idx] = np.stack((flow_x, flow_y, divergence, energy), axis=0)
+            
+            prev_gray = resized # becoming the next previous frame
 
     cap.release()
     out.flush()
-    del out
 
-    print(f"Saved downsampled binary video: {output_path}")
-    return output_path
+    if not generate_optic_flow:
+        print(f"Saved downsampled binary video: {output_path}")
+        return output_path
+    else:
+        out_flow.flush()
+        print(f"Saved downsampled binary video: {output_path} and optic flow: {output_path_flow}")
+        return output_path, output_path_flow
 
 def correctNeuronPos(neuron_pos, resolution=2.14):
     """

@@ -8,10 +8,7 @@ from skimage.filters import gabor_kernel
 import hashlib
 import gc
 import torch
-try:
-    from .torch_utils import handle_torch_device, print_cuda_tensors_mem
-except ImportError:  # Support direct execution from the module directory.
-    from torch_utils import handle_torch_device, print_cuda_tensors_mem
+from torch_utils import handle_torch_device, print_cuda_tensors_mem
 
 def makeGaborFilter_vS(i, j, angle, size, frequency, drift, phase, screen_x=100, screen_y=75, screen_t=3):
     """

@@ -5,7 +5,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from main_window import MainWindow
+from .main_window import MainWindow
 
 
 def run_gui(cells_path: str | None = None, background_path: str | None = None) -> None:
