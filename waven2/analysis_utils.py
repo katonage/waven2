@@ -141,7 +141,9 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
             dsize=(screen_x, screen_y),
             interpolation=cv2.INTER_AREA,
         )
-        resized=resized.T # switch to x,y format
+        # OpenCV frames are indexed from top to bottom. Store the NPY in
+        # (x, y) order with y increasing from the physical bottom to the top.
+        resized = np.flipud(resized).T
 
         binary = resized > threshold
         out[frame_idx] = binary
@@ -151,7 +153,9 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
             if prev_gray is None:
                 prev_gray = resized
             
-            flow_y, flow_x = optical_flow_tvl1( # optical flow from previous frame
+            # resized is indexed as (x, y), so the returned axis-0 and axis-1
+            # displacements are respectively flow_x and flow_y.
+            flow_x, flow_y = optical_flow_tvl1( # optical flow from previous frame
                     prev_gray,
                     resized,
                     attachment=5.0,
@@ -166,8 +170,8 @@ def downscale_binary_video(path, full_screen_coverage, visual_coverage, screen_x
             flow_y = gaussian_filter(flow_y, sigma=3)
             flow_x = gaussian_filter(flow_x, sigma=3)
             
-            dfx_dy, dfx_dx = np.gradient(flow_x)
-            dfy_dy, dfy_dx = np.gradient(flow_y)
+            dfx_dx, dfx_dy = np.gradient(flow_x)
+            dfy_dx, dfy_dy = np.gradient(flow_y)
 
             energy = ( dfx_dx**2 + dfx_dy**2 + dfy_dx**2 + dfy_dy**2 ) # energy (1/s^2)
             divergence = dfx_dx + dfy_dy #divergence  (1/s)

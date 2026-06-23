@@ -63,7 +63,7 @@ def makeGaborFilter_vS(i, j, angle, size, frequency, drift, phase, screen_x=100,
     for t in range(screen_t):
         # calculate the center position for this frame, applying drift perpendicular to angle
         center_x = int(np.round(i + drift * np.cos(angle) * (t - t0)))
-        center_y = int(np.round(j - drift * np.sin(angle) * (t - t0)))
+        center_y = int(np.round(j + drift * np.sin(angle) * (t - t0)))
 
         x0 = min(screen_x, max(0, center_x - dp))
         x1 = min(screen_x, max(0, center_x + dp + 1))
