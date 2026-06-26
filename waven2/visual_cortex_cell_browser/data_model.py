@@ -16,7 +16,6 @@ DISPLAY_FIELD_MAP: dict[str, Optional[str]] = {
     "angle": "Angle",
     "size": "Size",
     "freq": "Frequency",
-    "drift": "Drift",
     "phase": "Phase",
     "Angle_fit_ori": "Angle_fit_ori",
     "Angle_fit_OSI": "Angle_fit_OSI",
@@ -33,7 +32,6 @@ TUNING_SPECS = [
     ("angle", "Angle", "tun_angles", "angles"),
     ("size", "Size", "tun_sizes", "sizes"),
     ("freq", "Frequency", "tun_freqs", "freqs"),
-    ("drift", "Drift", "tun_drifts", "drifts"),
     ("phase", "Phase", "tun_phases", "phases"),
 ]
 

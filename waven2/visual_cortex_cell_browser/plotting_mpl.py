@@ -142,7 +142,7 @@ class MatplotlibRenderer:
             except Exception:
                 pass
         
-        if label in ["x", "y", "size", "freq", "drift"]:
+        if label in ["x", "y", "size", "freq"]:
             best, fit_params = fit_quadratic(x, y)
             ax.axvline(best, color="0.45", linewidth=0.6)
 
