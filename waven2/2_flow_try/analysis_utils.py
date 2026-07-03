@@ -204,11 +204,11 @@ def compute_respcorr_split_half(resps_all):
     respcorr = np.zeros(n_neurons)
 
     for ni in tqdm(range(n_neurons), desc="Computing split-half correlation per neuron"):
-        corrs = np.empty(len(splits))
+        corrs = []
 
-        for i, groupA in enumerate(splits):
+        for groupA in splits:
             groupA = list(groupA)
-            groupB = [i for i in range(n_trials) if i not in groupA]
+            groupB = [j for j in range(n_trials) if j not in groupA]
 
             A = resps_all[groupA, :, ni].mean(axis=0)
             B = resps_all[groupB, :, ni].mean(axis=0)
@@ -219,10 +219,10 @@ def compute_respcorr_split_half(resps_all):
 
             c = np.corrcoef(A, B)[0, 1]
 
-            if not np.isnan(c):
-                corrs[i] = c
+            if np.isfinite(c):
+                corrs.append(c)
 
-        if len(corrs) == 0:
+        if not corrs:
             respcorr[ni] = np.nan
         else:
             respcorr[ni] = np.mean(corrs)
