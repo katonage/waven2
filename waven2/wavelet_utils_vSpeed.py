@@ -109,16 +109,17 @@ def makeGaborFilter_visual_vS(i_deg, j_deg, angle, size_deg,  freq_deg, phase, v
     # --- pixels per degree ---
     px_per_deg_x = screen_x / (az_right - az_left)
     px_per_deg_y = screen_y / (el_top - el_bottom)
+    px_per_deg = (px_per_deg_x + px_per_deg_y) / 2 # isotropic approx
 
     # --- convert position ---
     i_px = (i_deg - az_left) * px_per_deg_x
     j_px = (j_deg - el_bottom) * px_per_deg_y   
 
     # --- convert size ---
-    size_px = size_deg * (px_per_deg_x + px_per_deg_y) / 2  # isotropic approx
+    size_px = size_deg * px_per_deg  
 
     # --- convert frequency ---
-    frequency = freq_deg * (px_per_deg_x + px_per_deg_y) / 2
+    frequency = freq_deg / px_per_deg
 
     filt= makeGaborFilter_vS(
         int(round(i_px)),
@@ -197,60 +198,7 @@ def loadFilterParamDict_vS(json_path):
     screen_y = params['screen_y']
     return xs, ys, angles, sizes, freqs,  phases, visual_coverage, full_screen_coverage, screen_x, screen_y
 
-def makeFilterLibrary_vS(paramsdict):
-    """
-    Builds a Gabor filter library. We dont't use this as the library is too large to fit in memory. Generate filters on the fly. 
 
-    Parameter: paramsdict (dict): A dictionary containing the parameters for Gabor filter generation:
-        screen_x, screen_y (int): Width, height, and time dimension of the screen in pixels.
-        visual_coverage (float): Coverage of the visual field.
-        full_screen_coverage (float): Full screen coverage in visual degrees.
-        xs (array-like): Array of x positions (azimuth) in visual degrees.
-        ys (array-like): Array of y positions (elevation) in visual degrees.
-        angles (array-like): Orientations in radians (typically spanning 0 to π).
-        sizes (array-like): FWHM of the Gaussian envelope (in visual degrees).
-        freqs (array-like): Spatial frequencies (cycles per visual degree).
-        phases (array-like): Phase offsets (e.g., 0 and π/2).
-
-    Returns:
-        numpy.ndarray: Gabor filter library of shape
-            (nx, ny, n_orientation, n_sigma, n_frequency,  n_phase, nx * ny)
-    """
-    
-    xs = paramsdict['xs']
-    ys = paramsdict['ys']
-    angles = paramsdict['angles']
-    sigmas = paramsdict['sizes']
-    frequencies = paramsdict['freqs']
-    offsets = paramsdict['phases']
-    screen_x = paramsdict['screen_x']
-    screen_y = paramsdict['screen_y']
-    visual_coverage = paramsdict['visual_coverage']
-    
-    library = np.empty( (len(xs), len(ys), len(angles), len(sigmas), len(frequencies), len(drifts), len(offsets), screen_t, screen_x, screen_y), dtype=np.float16 )
-    for xi, x in tqdm(enumerate(xs), total=len(xs)):
-        for yi, y in enumerate(ys):
-            for ti, t in enumerate(angles):
-                for si, s in enumerate(sigmas):
-                    for fi, f in enumerate(frequencies):
-                            for oi, o in enumerate(offsets):
-                                library[xi, yi, ti, si, fi, di, oi] = makeGaborFilter_visual_vS(            
-                                                                        i_deg=x,
-                                                                        j_deg=y,
-                                                                        size_deg=s,
-                                                                        angle=t,
-                                                                        freq_deg=f,
-                                                                        phase=o,
-                                                                        visual_coverage=visual_coverage,
-                                                                        screen_x=screen_x,
-                                                                        screen_y=screen_y,
-                                                                        )
-
-    library=np.array(library)
-    library=library.reshape((len(xs), len(ys), len(angles), len(sigmas), len(frequencies),  len(offsets),  screen_x, screen_y))
-    
-    return library, paramsdict
-    
 
 def get_filter_from_params(xi, yi, ai, si, fi,  oi, params):
     # retrieves a single Gabor filter based on the provided indices and parameters dictionary
@@ -493,7 +441,8 @@ def compute_and_save_dwt_vS(downsampled_video_path, params,  device='cuda', forc
     saveFilterParamDict_vS(params, Path(workpath) / json_filename)
     
     json_filename=Path(json_filename)
-    dwt_name= f"{downsampled_video_path.stem}_lib{"_".join(json_filename.stem.split("_")[1:])}dwt.npy"
+    lib_suffix = "_".join(json_filename.stem.split("_")[1:])
+    dwt_name= f"{downsampled_video_path.stem}_lib{lib_suffix}dwt.npy"
     print(f"||Constructing: {dwt_name} ")
     dwt_path= downsampled_video_path.parent / dwt_name
     if dwt_path.exists() and not force:

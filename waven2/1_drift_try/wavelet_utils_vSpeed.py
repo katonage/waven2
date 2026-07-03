@@ -115,19 +115,20 @@ def makeGaborFilter_visual_vS(i_deg, j_deg, angle, size_deg,  freq_deg, drift_de
     # --- pixels per degree ---
     px_per_deg_x = screen_x / (az_right - az_left)
     px_per_deg_y = screen_y / (el_top - el_bottom)
+    px_per_deg = (px_per_deg_x + px_per_deg_y) / 2
 
     # --- convert position ---
     i_px = (i_deg - az_left) * px_per_deg_x
     j_px = (j_deg - el_bottom) * px_per_deg_y   
 
     # --- convert size ---
-    size_px = size_deg * (px_per_deg_x + px_per_deg_y) / 2  # isotropic approx
+    size_px = size_deg * px_per_deg  # isotropic approx
 
     # --- convert frequency ---
-    frequency = freq_deg * (px_per_deg_x + px_per_deg_y) / 2
+    frequency = freq_deg / px_per_deg
 
     # --- convert drift ---
-    drift = drift_deg * (px_per_deg_x + px_per_deg_y) / 2
+    drift = drift_deg * px_per_deg
 
     filt= makeGaborFilter_vS(
         int(round(i_px)),
@@ -572,7 +573,8 @@ def compute_and_save_dwt_vS(downsampled_video_path, params,  device='cuda', forc
     saveFilterParamDict_vS(params, Path(workpath) / json_filename)
     
     json_filename=Path(json_filename)
-    dwt_name= f"{downsampled_video_path.stem}_lib{"_".join(json_filename.stem.split("_")[1:])}dwt.npy"
+    lib_suffix = "_".join(json_filename.stem.split("_")[1:])
+    dwt_name= f"{downsampled_video_path.stem}_lib{lib_suffix}dwt.npy"
     print(f"||Constructing: {dwt_name} ")
     dwt_path= downsampled_video_path.parent / dwt_name
     if dwt_path.exists() and not force:

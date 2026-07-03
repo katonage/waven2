@@ -372,7 +372,7 @@ def dwt_amp_phase_torch_batched(dwt, phases=None, device="cuda", batch_size=8192
         at each phase.
     phases : array-like, optional
         Shape (n_phase,). Phase values in radians. If None, phases are assumed
-        to be evenly spaced over [0, 2*pi).
+        to be evenly spaced over [0, 1*pi]).
     device : str
         "cuda" or "cpu".
     batch_size : int
