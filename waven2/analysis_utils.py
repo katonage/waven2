@@ -279,6 +279,180 @@ def compute_respcorr_split_half(resps_all):
 
     return respcorr
 
+def ccmax_from_cchalf_simple(CChalf):
+    """
+    Convert split-half response repeatability to a full-trial CCmax estimate.
+
+    This function converts a split-half response correlation, CChalf, into the
+    expected upper bound on the correlation between a model prediction and the
+    response averaged over all available stimulus repetitions. This will be 
+    used to normalize model performance by the noise ceiling.
+
+    CChalf is assumed to be the Pearson correlation between the mean neural
+    responses computed from two equally sized subsets of stimulus repetitions.
+    For example, with four repeats, CChalf is the correlation between the
+    average response of two repeats and the average response of the other two
+    repeats, usually averaged over all possible 2-vs-2 splits.
+
+    The conversion uses the Spearman-Brown correction:
+
+        reliability_full = 2 * CChalf / (1 + CChalf)
+
+    Because model performance is measured as a Pearson correlation with the
+    trial-averaged response, the corresponding correlation ceiling is the square
+    root of this reliability:
+
+        CCmax = sqrt(reliability_full)
+
+    Therefore:
+
+        CCmax = sqrt(2 * CChalf / (1 + CChalf))
+
+    Parameters
+    ----------
+    CChalf : array-like
+        Split-half response repeatability values. Each value should be a Pearson
+        correlation between two subset-averaged responses. Values <= 0 are
+        treated as undefined because they do not provide a meaningful positive
+        noise ceiling.
+
+    Returns
+    -------
+    CCmax : ndarray
+        Estimated maximum achievable correlation with the full trial-averaged
+        response. Values are NaN where CChalf is invalid or non-positive.
+        Values with CChalf >= 1 are set to 1.
+
+    Notes
+    -----
+    This formula is exact for equal-size split halves, such as 2-vs-2 splits
+    with four trials or 3-vs-3 splits with six trials.
+
+    For odd trial numbers, such as 1-vs-2 or 2-vs-3 splits, the two split
+    averages have slightly different noise levels. A more exact unequal-split
+    correction can be used in that case, but the difference in CCmax is small
+    for typical trial counts. For n_trials = 3, the maximum absolute difference
+    from the unequal-split correction is approximately 0.014 in CCmax units,
+    and it becomes smaller for larger trial numbers.
+
+    This correlation-based estimate is relatively insensitive to trial-to-trial
+    gain changes, because it is based on Pearson correlation rather than raw
+    response variance.
+    """
+    CChalf = np.asarray(CChalf, dtype=float)
+
+    CCmax = np.full_like(CChalf, np.nan, dtype=float)
+
+    valid = np.isfinite(CChalf) & (CChalf > 0) & (CChalf < 1)
+
+    CCmax[valid] = np.sqrt(
+        2 * CChalf[valid] / (1 + CChalf[valid])
+    )
+
+    CCmax[CChalf >= 1] = 1.0
+
+    return CCmax
+
+def ccmax_schoppe_from_trials(y_trials):
+    """
+    Estimate Schoppe-style CCmax from trial-by-trial neural responses.
+
+    This function computes the noise ceiling used to normalize prediction
+    correlations according to the variance-based formulation described by
+    Schoppe et al. and used in the Nature foundation-model paper
+    (Wang et al., 2025).
+
+    CCmax estimates the maximum Pearson correlation that any model could
+    achieve with the trial-averaged neural response, given the finite number
+    of stimulus repetitions and the trial-to-trial variability of the neuron.
+
+    For each neuron, the response is assumed to have shape:
+
+        y_trials[trial, time, neuron]
+
+    The trial-averaged response is:
+
+        y_bar(t) = mean_i y_i(t)
+
+    The Schoppe-style ceiling is then computed as:
+
+        CCmax = sqrt(
+            (N * Var(y_bar) - mean_i Var(y_i))   /  ((N - 1) * Var(y_bar))
+        )
+
+    where N is the number of trials, Var(y_bar) is the variance over time of
+    the trial-averaged response, and mean_i Var(y_i) is the average temporal
+    variance of the individual trial responses.
+
+    Parameters
+    ----------
+    y_trials : ndarray
+        Trial-by-trial neural responses with shape
+        (n_trials, n_timepoints, n_neurons).
+
+    Returns
+    -------
+    CCmax_schoppe : ndarray
+        One-dimensional array of shape (n_neurons,) containing the estimated
+        CCmax value for each neuron.
+
+
+    Notes
+    -----
+    This is a variance-based noise-ceiling estimate. It is sensitive to
+    trial-to-trial gain changes.
+
+    The function assumes that all trials correspond to repeated presentations
+    of the same stimulus sequence and are temporally aligned.
+    """
+    y_trials = np.asarray(y_trials, dtype=float)
+    n_trials, n_time, n_neurons = y_trials.shape
+
+    def ccmax_schoppe_from_trials_core(y_trials_2d):
+        """
+        Compute Schoppe-style CCmax for one neuron.
+
+        Parameters
+        ----------
+        y_trials_2d : ndarray
+            Shape: (n_trials, n_timepoints)
+
+        Returns
+        -------
+        ccmax : float
+            Estimated CCmax for one neuron.
+        """
+        if n_trials < 2:
+            return np.nan
+
+        y_bar = np.mean(y_trials_2d, axis=0)
+
+        var_y_bar = np.var(y_bar)
+
+        # Variance over time within each trial, then average over trials.
+        mean_trial_var = np.mean(np.var(y_trials_2d, axis=1))
+
+        numerator = n_trials * var_y_bar - mean_trial_var
+        denominator = (n_trials - 1) * var_y_bar
+
+        if denominator <= 0 or numerator <= 0:
+            return np.nan
+
+        ccmax = np.sqrt(numerator / denominator)
+
+        if not np.isfinite(ccmax):
+            return np.nan
+
+        return min(ccmax, 1.0)
+
+    CCmax_schoppe = np.full(n_neurons, np.nan)
+
+    for ni in range(n_neurons):
+        y_trials_ni = y_trials[:, :, ni]
+        CCmax_schoppe[ni] = ccmax_schoppe_from_trials_core(y_trials_ni)
+
+    return CCmax_schoppe
+
 def FeatureSearch_correlation_batched(stim, resp, device="cuda", feature_batch_size=10_000  ):
     """
     Pearson correlation between WT stimulus features and neural responses. Uses GPU feature-batched.
