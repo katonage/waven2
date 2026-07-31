@@ -396,22 +396,10 @@ def _save_performance_plot(
 def _save_reliability_plots(
     output_folder: Path,
     ccmax: np.ndarray,
-    ccmax_schoppe: np.ndarray,
     r_test: np.ndarray,
     accepted: np.ndarray,
     top_indices: np.ndarray,
 ) -> tuple[np.ndarray, float]:
-    fig = Figure(figsize=(7, 6))
-    ax = fig.subplots()
-    ax.scatter(ccmax, ccmax_schoppe, alpha=0.5)
-    ax.scatter(ccmax[accepted], ccmax_schoppe[accepted], alpha=0.5)
-    ax.plot([0, 1], [0, 1], color="black", linestyle="--")
-    ax.set_xlabel("CCmax from split-half reliability")
-    ax.set_ylabel("CCmax from Schoppe method")
-    fig.tight_layout()
-    fig.savefig(output_folder / "ccmax_method_comparison.png", dpi=300)
-    fig.clear()
-
     ccnorm = np.full_like(r_test, np.nan, dtype=float)
     valid = np.isfinite(r_test) & np.isfinite(ccmax) & (ccmax > 0)
     ccnorm[valid] = r_test[valid] / ccmax[valid]
@@ -440,6 +428,52 @@ def _save_reliability_plots(
     fig.savefig(output_folder / "ccmax_vs_prediction_correlation.png", dpi=300)
     fig.clear()
     return ccnorm, population_ccnorm
+
+
+def _save_fitted_rf_positions(
+    output_folder: Path,
+    df_cells: pd.DataFrame,
+    visual_coverage: Sequence[float],
+) -> None:
+    """Plot fitted receptive-field centers in visual-degree coordinates."""
+
+    azimuth = pd.to_numeric(df_cells["Azimuth_fit"], errors="coerce").to_numpy()
+    elevation = pd.to_numeric(df_cells["Elevation_fit"], errors="coerce").to_numpy()
+    repeatability = pd.to_numeric(
+        df_cells["Repeatability"], errors="coerce"
+    ).to_numpy()
+    finite = np.isfinite(azimuth) & np.isfinite(elevation)
+    good_finite = finite & np.isfinite(repeatability) & (repeatability > 0.2)
+
+    az_left, az_right, el_bottom, el_top = visual_coverage
+    figure = Figure(figsize=(8, 6))
+    axis = figure.subplots()
+    axis.scatter(
+        azimuth[finite],
+        elevation[finite],
+        s=18,
+        color="0.65",
+        alpha=0.55,
+        label=f"All cells (n={np.count_nonzero(finite)})",
+    )
+    axis.scatter(
+        azimuth[good_finite],
+        elevation[good_finite],
+        s=24,
+        color="tab:blue",
+        alpha=0.8,
+        label=f"Good cells: repeatability > 0.2 (n={np.count_nonzero(good_finite)})",
+    )
+    axis.set_xlim(az_left, az_right)
+    axis.set_ylim(el_bottom, el_top)
+    axis.set_aspect("equal", adjustable="box")
+    axis.set_xlabel("Fitted azimuth (visual degrees)")
+    axis.set_ylabel("Fitted elevation (visual degrees)")
+    axis.set_title("Fitted receptive-field positions")
+    axis.legend()
+    figure.tight_layout()
+    figure.savefig(output_folder / "fitted_rf_positions.png", dpi=300)
+    figure.clear()
 
 
 def _add_results_to_cells(
@@ -636,7 +670,6 @@ def run_feature_estimation(
     from waven2.analysis_utils import (
         FeatureSearch_correlation_batched,
         ccmax_from_cchalf_simple,
-        ccmax_schoppe_from_trials,
         compute_respcorr_split_half,
         downscale_binary_video,
     )
@@ -749,11 +782,9 @@ def run_feature_estimation(
     )
 
     ccmax = ccmax_from_cchalf_simple(respcorr)
-    ccmax_schoppe = ccmax_schoppe_from_trials(spks)
     ccnorm, population_ccnorm = _save_reliability_plots(
         output_folder,
         ccmax,
-        ccmax_schoppe,
         r_test,
         accepted,
         top_indices,
@@ -804,6 +835,11 @@ def run_feature_estimation(
         angle_fits,
         tuning_fits,
         params,
+    )
+    _save_fitted_rf_positions(
+        output_folder,
+        df_cells,
+        config.visual_coverage,
     )
     cell_database_path = output_folder / "cells_waven1.cellDB_pickle"
     with cell_database_path.open("wb") as handle:
