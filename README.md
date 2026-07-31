@@ -10,3 +10,16 @@ The package can be installed:
 * download repo, navigate in it.
 * `pip install -e .`.
 
+## S4 feature estimation
+
+The reusable Python version of `S4_feature_estimation_vS.ipynb` can be run
+from the repository root:
+
+```powershell
+python -m waven2.s4_feature_estimation --help
+python -m waven2.s4_feature_estimation <resps_all.npy> <resampled_video.mp4>
+```
+
+Other applications can call `run_feature_estimation()` with a
+`FeatureEstimationConfig`, without running the command-line interface.
+
