@@ -384,8 +384,22 @@ def _save_performance_plot(
     axes[0].set_ylabel("Prediction correlation")
     if np.isfinite(train_a):
         axes[0].plot(xx, train_a * xx + train_b, color="black")
+        axes[0].text(
+            0.05,
+            0.95,
+            f"y = {train_a:.3f}x + {train_b:.3f}",
+            transform=axes[0].transAxes,
+            va="top",
+        )
     if np.isfinite(test_a):
         axes[1].plot(xx, test_a * xx, color="black")
+        axes[1].text(
+            0.05,
+            0.95,
+            f"y = {test_a:.3f}x",
+            transform=axes[1].transAxes,
+            va="top",
+        )
     fig.tight_layout()
     fig.savefig(
         output_folder / "respcorr_vs_prediction_correlation_5.png", dpi=300
@@ -755,9 +769,10 @@ def run_feature_estimation(
         mean_spks[:train_split_index],
         device=config.device,
     )
-    output_folder = config.output_folder or working_dir / (
-        paramname.removesuffix(".json") + f"_{mode_comment}"
-    )
+    output_folder = config.output_folder or working_dir
+    #output_folder = config.output_folder or working_dir / (
+    #    paramname.removesuffix(".json") + f"_{mode_comment}"
+    #)
     output_folder.mkdir(parents=True, exist_ok=True)
     saveFilterParamDict_vS(params, output_folder / paramname)
 
