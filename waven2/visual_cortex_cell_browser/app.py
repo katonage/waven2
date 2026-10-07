@@ -1,34 +1,16 @@
-from __future__ import annotations
+"""Compatibility forwarding for the browser moved to twop_analysis."""
 
-import argparse
-import sys
 
-from PySide6.QtWidgets import QApplication
+def run_gui(cells_path: str | None = None, background_path: str | None = None):
+    from twop_analysis.cell_browser.app import run_gui as launch
 
-try:
-    from main_window import MainWindow
-except Exception:  # package import fallback
-    from .main_window import MainWindow
-
-def run_gui(cells_path: str | None = None, background_path: str | None = None) -> None:
-    app = QApplication.instance()
-    owns_app = app is None
-    if app is None:
-        app = QApplication(sys.argv)
-
-    window = MainWindow(cells_path=cells_path, background_path=background_path)
-    window.showMaximized()
-
-    if owns_app:
-        sys.exit(app.exec())
+    return launch(cells_path=cells_path, background_path=background_path)
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Visual Cortex Cell Browser")
-    parser.add_argument("--cells", default=None, help="Path to .cellDB_pickle file")
-    parser.add_argument("--background", default=None, help="Path to .npy background image")
-    args = parser.parse_args(argv)
-    run_gui(cells_path=args.cells, background_path=args.background)
+    from twop_analysis.cell_browser.app import main as launch
+
+    launch(argv)
 
 
 if __name__ == "__main__":

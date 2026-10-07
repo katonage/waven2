@@ -6,19 +6,8 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-try:
-    from data_model import CellDataModel, TUNING_SPECS
-except Exception:  # package import fallback
-    from .data_model import CellDataModel, TUNING_SPECS
-try:
-    from ..analysis_utils import sine1x, fit_quadratic, restore_fit_quadratic
-except Exception:  # package import fallback
-    from pathlib import Path
-    import sys
-
-    parent_dir = Path(__file__).resolve().parent.parent
-    sys.path.insert(0, str(parent_dir))
-    from analysis_utils import sine1x, fit_quadratic, restore_fit_quadratic
+from .data_view import WavenDataView as CellDataModel, TUNING_SPECS
+from ..analysis_utils import sine1x, fit_quadratic, restore_fit_quadratic
 
 def _as_numeric_array(value) -> Optional[np.ndarray]:
     if value is None:

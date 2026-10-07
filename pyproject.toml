@@ -27,14 +27,14 @@ dependencies = [
     "tqdm",
 ]
 
-[project.scripts]
-cb = "waven2.visual_cortex_cell_browser.app:main"
-cell-browser = "waven2.visual_cortex_cell_browser.app:main"
+[project.entry-points."twop_analysis.cell_browser.plugins"]
+waven2 = "waven2.cell_browser_plugin:WavenBrowserPlugin"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = [
     "waven2",
+    "waven2.cell_browser_plugin",
     "waven2.visual_cortex_cell_browser",
 ]
 exclude = [

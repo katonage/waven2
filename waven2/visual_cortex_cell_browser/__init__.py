@@ -1,4 +1,4 @@
-"""Task-specific browser for evaluated visual cortical cell properties."""
+"""Compatibility entry point; the browser now lives in twop_analysis."""
 
 from .app import run_gui
 
